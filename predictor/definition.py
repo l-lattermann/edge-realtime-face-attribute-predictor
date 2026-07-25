@@ -1,9 +1,15 @@
-# mobilenetv3-small, howard 2019 table 2. branch after row 9, row 10 is the last stride-2
 import torch
 import torch.nn as nn
 import torchvision
 
+BRANCH_ROW = 9  # trunk ends here
+POOLED_WIDTH = 576  # channels out of row 13
+NUM_EXPRESSIONS = 7  # must match dataloader
+NUM_AGE_BINS = 9  # must match dataloader
+NUM_GENDERS = 2
 
+
+# mobilenetv3-small, howard 2019 table 2. branch after row 9, row 10 is the last stride-2
 class Predictor(nn.Module):
     def __init__(self, branch_row=BRANCH_ROW):
         super().__init__()

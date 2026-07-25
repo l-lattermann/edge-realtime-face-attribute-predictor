@@ -1,0 +1,4 @@
+precision,size_mb
+fp32,4.61
+fp16,2.37
+int8,1.29
