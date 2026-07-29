@@ -6,14 +6,9 @@ struct OverlayView: View {
     let predictions: [FacePrediction]
 
     var body: some View {
-        GeometryReader { geometry in
+        ZStack {
             ForEach(predictions) { prediction in
-                // vision is normalised, origin bottom left
-                let box = CGRect(
-                    x: prediction.box.minX * geometry.size.width,
-                    y: (1 - prediction.box.maxY) * geometry.size.height,
-                    width: prediction.box.width * geometry.size.width,
-                    height: prediction.box.height * geometry.size.height)
+                let box = prediction.box
 
                 Rectangle()
                     .stroke(.green, lineWidth: 2)
@@ -25,7 +20,9 @@ struct OverlayView: View {
                     label(prediction.gender, prediction.genderConfidence)
                     label(prediction.expression, prediction.expressionConfidence)
                 }
-                .position(x: box.midX, y: box.maxY + 28)
+                .padding(4)
+                .background(.black.opacity(0.6))
+                .position(x: box.midX, y: box.maxY + 34)
             }
         }
     }
@@ -33,11 +30,11 @@ struct OverlayView: View {
     private func label(_ text: String, _ confidence: Float) -> some View {
         HStack(spacing: 4) {
             Text(text)
-                .font(.system(.caption, design: .monospaced))
+                .font(.system(.caption2, design: .monospaced))
                 .foregroundStyle(.white)
             Capsule()
                 .fill(.green)
-                .frame(width: CGFloat(confidence) * 40, height: 4)   // 40pt at full conf
+                .frame(width: CGFloat(confidence) * 40, height: 3)   // 40pt at full conf
         }
     }
 }
