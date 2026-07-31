@@ -1,6 +1,7 @@
 //  CameraView.swift
 
 import AVFoundation
+import QuartzCore
 import SwiftUI
 
 final class CameraSession: NSObject, ObservableObject {
@@ -9,12 +10,17 @@ final class CameraSession: NSObject, ObservableObject {
     @Published var fps: Double = 0
     @Published var memoryMb: Double = 0
     @Published var usingFrontCamera = false
+    @Published var highResolution = false
+    @Published var smoothing = true
+    @Published var precision = "fp16"
 
     let session = AVCaptureSession()
+    let metrics = Metrics()
     var previewLayer: AVCaptureVideoPreviewLayer?
+
     private let output = AVCaptureVideoDataOutput()
     private let inference = Inference()
-    private let metrics = Metrics()
+    private let smoother = Smoother()
     private let queue = DispatchQueue(label: "camera")
     private var busy = false
 
@@ -28,14 +34,23 @@ final class CameraSession: NSObject, ObservableObject {
 
     func flipCamera() {
         usingFrontCamera.toggle()
+        smoother.reset()
         queue.async { self.attachCamera() }
+    }
+
+    func toggleResolution() {
+        highResolution.toggle()
+        queue.async { self.applyPreset() }
+    }
+
+    func use(precision name: String) {
+        precision = name
+        smoother.reset()
+        queue.async { self.inference.use(precision: name) }
     }
 
     private func configure() {
         session.beginConfiguration()
-
-        // 720p is enough for the 224 crop, 1080 only helps far away
-        session.sessionPreset = .hd1280x720
         output.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String:
                                     kCVPixelFormatType_32BGRA]
 
@@ -47,8 +62,16 @@ final class CameraSession: NSObject, ObservableObject {
         }
         session.commitConfiguration()
 
+        applyPreset()
         attachCamera()
         session.startRunning()
+    }
+
+    // 720p is enough for the 224 crop, 1080 only helps far away
+    private func applyPreset() {
+        session.beginConfiguration()
+        session.sessionPreset = highResolution ? .hd1920x1080 : .hd1280x720
+        session.commitConfiguration()
     }
 
     private func attachCamera() {
@@ -72,36 +95,51 @@ extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
                        didOutput sampleBuffer: CMSampleBuffer,
                        from connection: AVCaptureConnection) {
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        if busy { return }
+        if busy {
+            return
+        }
         busy = true
 
+        // clock starts here, latency is the whole frame not only the model
+        let frameStart = CACurrentMediaTime()
+
         let orientation: CGImagePropertyOrientation = usingFrontCamera ? .leftMirrored : .right
-        let (predictions, latencyMs) = inference.predict(pixelBuffer, orientation: orientation)
-        let fps = metrics.record(latencyMs: latencyMs, faceCount: predictions.count)
-        let memoryMb = Metrics.memoryMb()
+        let modelStart = CACurrentMediaTime()
+        var faces = inference.predict(pixelBuffer, orientation: orientation)
+        let modelMs = (CACurrentMediaTime() - modelStart) * 1000 / Double(max(faces.count, 1))
+
+        if smoothing {
+            faces = smoother.smooth(faces)
+        }
 
         // main thread, the view reads these
         DispatchQueue.main.async {
-            self.predictions = self.convert(predictions)
+            self.predictions = self.convert(faces)
+
+            let latencyMs = (CACurrentMediaTime() - frameStart) * 1000
             self.latencyMs = latencyMs
-            self.fps = fps
-            self.memoryMb = memoryMb
+            self.memoryMb = Metrics.memoryMb()
+            self.fps = self.metrics.record(latencyMs: latencyMs, modelMs: modelMs,
+                                           faceCount: faces.count, precision: self.precision,
+                                           resolution: self.highResolution ? "1080p" : "720p")
             self.busy = false
         }
     }
-}
 
-extension CameraSession {
     // vision box -> layer coords
-    func convert(_ predictions: [FacePrediction]) -> [FacePrediction] {
-        guard let layer = previewLayer else { return predictions }
-
+    func convert(_ faces: [FaceProbabilities]) -> [FacePrediction] {
         var converted: [FacePrediction] = []
-        for var prediction in predictions {
-            let flipped = CGRect(x: prediction.box.minX, y: 1 - prediction.box.maxY,
-                                 width: prediction.box.width, height: prediction.box.height)
-            prediction.box = layer.layerRectConverted(fromMetadataOutputRect: flipped)
-            converted.append(prediction)
+        for face in faces {
+            var box = face.box
+            if let layer = previewLayer {
+                let flipped = CGRect(x: box.minX, y: 1 - box.maxY,
+                                     width: box.width, height: box.height)
+                box = layer.layerRectConverted(fromMetadataOutputRect: flipped)
+            }
+            converted.append(FacePrediction(box: box,
+                                            age: label(face.age, ageBins),
+                                            gender: label(face.gender, genders),
+                                            expression: label(face.expression, expressions)))
         }
         return converted
     }
@@ -112,7 +150,7 @@ struct PreviewLayer: UIViewRepresentable {
 
     func makeUIView(context: Context) -> UIView {
         let view = UIView()
-        let layer = AVCaptureVideoPreviewLayer(camera: camera)
+        let layer = AVCaptureVideoPreviewLayer(session: camera.session)
         layer.videoGravity = .resizeAspectFill
         view.layer.addSublayer(layer)
 
@@ -127,6 +165,7 @@ struct PreviewLayer: UIViewRepresentable {
 
 struct CameraView: View {
     @StateObject private var camera = CameraSession()
+    @State private var shareItem: ShareItem?
 
     var body: some View {
         ZStack {
@@ -150,17 +189,50 @@ struct CameraView: View {
                     Button(action: camera.flipCamera) {
                         Image(systemName: "arrow.triangle.2.circlepath.camera")
                             .font(.title2)
-                            .padding(10)
+                            .frame(width: 44, height: 44)
                             .background(.black.opacity(0.6))
                             .foregroundStyle(.white)
                             .clipShape(Circle())
                     }
                 }
+
                 Spacer()
+
+                HStack(spacing: 10) {
+                    Button(camera.highResolution ? "1080p" : "720p", action: camera.toggleResolution)
+
+                    Button(camera.smoothing ? "smooth on" : "smooth off") {
+                        camera.smoothing.toggle()
+                    }
+
+                    Menu(camera.precision) {
+                        ForEach(precisions, id: \.self) { name in
+                            Button(name) { camera.use(precision: name) }
+                        }
+                    }
+
+                    Button("share \(camera.metrics.rowCount)") {
+                        shareItem = ShareItem(url: camera.metrics.writeTemporaryFile())
+                    }
+                }
+                .font(.system(.caption, design: .monospaced))
+                .padding(8)
+                .background(.black.opacity(0.6))
+                .foregroundStyle(.white)
+                .clipShape(Capsule())
             }
             .padding()
         }
         .preferredColorScheme(.dark)
         .onAppear { camera.start() }
+        .sheet(item: $shareItem) { item in
+            ShareSheet(url: item.url)
+        }
     }
+}
+
+// sheet(item:) wants Identifiable, a url alone is not
+struct ShareItem: Identifiable {
+    let id = UUID()
+    let url: URL
 }

@@ -2,37 +2,45 @@
 
 import Foundation
 import QuartzCore
+import UIKit
 
 final class Metrics {
     private let window = 30   // fps average over this many frames
-    private var recentMs: [Double] = []
-    private var handle: FileHandle?
+    private var recentSeconds: [Double] = []
+    private var rows: [String] = []
+    private var lastFrameSeconds = CACurrentMediaTime()
     private let startSeconds = CACurrentMediaTime()
 
-    init() {
-        // lands in documents, the Files app can reach it
-        let folder = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let url = folder.appendingPathComponent("metrics.csv")
-        let header = "seconds,latency_ms,fps,face_count,memory_mb,thermal\n"
-        try? header.write(to: url, atomically: true, encoding: .utf8)
-        handle = try? FileHandle(forWritingTo: url)
-        handle?.seekToEndOfFile()
+    let header = "seconds,latency_ms,model_ms,fps,face_count,memory_mb,thermal,precision,resolution"
+
+    func record(latencyMs: Double, modelMs: Double, faceCount: Int,
+                precision: String, resolution: String) -> Double {
+        // fps from the gap between processed frames, not from the latency
+        let now = CACurrentMediaTime()
+        recentSeconds.append(now - lastFrameSeconds)
+        lastFrameSeconds = now
+        if recentSeconds.count > window {
+            recentSeconds.removeFirst()
+        }
+        let meanSeconds = recentSeconds.reduce(0, +) / Double(recentSeconds.count)
+        let fps = meanSeconds > 0 ? 1 / meanSeconds : 0
+
+        rows.append(String(format: "%.2f,%.2f,%.2f,%.1f,%d,%.1f,%d,%@,%@",
+                           now - startSeconds, latencyMs, modelMs, fps, faceCount,
+                           Metrics.memoryMb(), ProcessInfo.processInfo.thermalState.rawValue,
+                           precision, resolution))
+        return fps
     }
 
-    func record(latencyMs: Double, faceCount: Int) -> Double {
-        recentMs.append(latencyMs)
-        if recentMs.count > window {
-            recentMs.removeFirst()
-        }
+    func writeTemporaryFile() -> URL {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("metrics.csv")
+        let text = ([header] + rows).joined(separator: "\n")
+        try? text.write(to: url, atomically: true, encoding: .utf8)
+        return url
+    }
 
-        let meanMs = recentMs.reduce(0, +) / Double(recentMs.count)
-        let fps = 1000 / meanMs
-
-        let row = String(format: "%.2f,%.2f,%.1f,%d,%.1f,%d\n",
-                         CACurrentMediaTime() - startSeconds, latencyMs, fps, faceCount,
-                         Metrics.memoryMb(), ProcessInfo.processInfo.thermalState.rawValue)
-        handle?.write(row.data(using: .utf8)!)
-        return fps
+    var rowCount: Int {
+        rows.count
     }
 
     // same number ios uses to decide what to kill
@@ -49,5 +57,16 @@ final class Metrics {
             return 0
         }
         return Double(info.phys_footprint) / 1024 / 1024
+    }
+}
+
+struct ShareSheet: UIViewControllerRepresentable {
+    let url: URL
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: [url], applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {
     }
 }
