@@ -11,9 +11,9 @@ final class Metrics {
     private var lastFrameSeconds = CACurrentMediaTime()
     private let startSeconds = CACurrentMediaTime()
 
-    let header = "seconds,latency_ms,model_ms,fps,face_count,memory_mb,thermal,precision,resolution"
+    let header = "seconds,latency_ms,model_ms,fps,classified,face_count,memory_mb,thermal,precision,resolution"
 
-    func record(latencyMs: Double, modelMs: Double, faceCount: Int,
+    func record(latencyMs: Double, modelMs: Double, classified: Bool, faceCount: Int,
                 precision: String, resolution: String) -> Double {
         // fps from the gap between processed frames, not from the latency
         let now = CACurrentMediaTime()
@@ -25,10 +25,10 @@ final class Metrics {
         let meanSeconds = recentSeconds.reduce(0, +) / Double(recentSeconds.count)
         let fps = meanSeconds > 0 ? 1 / meanSeconds : 0
 
-        rows.append(String(format: "%.2f,%.2f,%.2f,%.1f,%d,%.1f,%d,%@,%@",
-                           now - startSeconds, latencyMs, modelMs, fps, faceCount,
-                           Metrics.memoryMb(), ProcessInfo.processInfo.thermalState.rawValue,
-                           precision, resolution))
+        rows.append(String(format: "%.2f,%.2f,%.2f,%.1f,%d,%d,%.1f,%d,%@,%@",
+                           now - startSeconds, latencyMs, modelMs, fps, classified ? 1 : 0,
+                           faceCount, Metrics.memoryMb(),
+                           ProcessInfo.processInfo.thermalState.rawValue, precision, resolution))
         return fps
     }
 

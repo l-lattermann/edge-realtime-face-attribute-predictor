@@ -3,6 +3,7 @@
 import AVFoundation
 import QuartzCore
 import SwiftUI
+import Vision
 
 final class CameraSession: NSObject, ObservableObject {
     @Published var predictions: [FacePrediction] = []
@@ -11,7 +12,7 @@ final class CameraSession: NSObject, ObservableObject {
     @Published var memoryMb: Double = 0
     @Published var usingFrontCamera = false
     @Published var highResolution = false
-    @Published var smoothing = true
+    @Published var inferEvery = 5   // classify every nth frame, detect on all
     @Published var precision = "fp16"
 
     let session = AVCaptureSession()
@@ -20,9 +21,10 @@ final class CameraSession: NSObject, ObservableObject {
 
     private let output = AVCaptureVideoDataOutput()
     private let inference = Inference()
-    private let smoother = Smoother()
+    private let tracker = Tracker()
     private let queue = DispatchQueue(label: "camera")
     private var busy = false
+    private var frameCount = 0
 
     func start() {
         AVCaptureDevice.requestAccess(for: .video) { granted in
@@ -34,7 +36,7 @@ final class CameraSession: NSObject, ObservableObject {
 
     func flipCamera() {
         usingFrontCamera.toggle()
-        smoother.reset()
+        tracker.reset()
         queue.async { self.attachCamera() }
     }
 
@@ -45,7 +47,7 @@ final class CameraSession: NSObject, ObservableObject {
 
     func use(precision name: String) {
         precision = name
-        smoother.reset()
+        tracker.reset()
         queue.async { self.inference.use(precision: name) }
     }
 
@@ -104,13 +106,34 @@ extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
         let frameStart = CACurrentMediaTime()
 
         let orientation: CGImagePropertyOrientation = usingFrontCamera ? .leftMirrored : .right
-        let modelStart = CACurrentMediaTime()
-        var faces = inference.predict(pixelBuffer, orientation: orientation)
-        let modelMs = (CACurrentMediaTime() - modelStart) * 1000 / Double(max(faces.count, 1))
+        let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer,
+                                            orientation: orientation, options: [:])
 
-        if smoothing {
-            faces = smoother.smooth(faces)
+        // detect every frame so the box does not stutter
+        let boxes = inference.detect(handler)
+
+        frameCount = frameCount + 1
+        let classifying = frameCount % inferEvery == 0
+
+        var faces: [(CGRect, String, String, String)] = []
+        let modelStart = CACurrentMediaTime()
+
+        if classifying {
+            for box in boxes {
+                let (age, gender, expression) = inference.classify(handler, box: box)
+                faces.append((box, age, gender, expression))
+            }
+            tracker.remember(faces)
+        } else {
+            // reuse the labels of the last classified frame
+            for box in boxes {
+                let carried = tracker.labels(for: box) ?? ("", "", "")
+                faces.append((box, carried.0, carried.1, carried.2))
+            }
         }
+
+        let modelMs = classifying
+            ? (CACurrentMediaTime() - modelStart) * 1000 / Double(max(boxes.count, 1)) : 0
 
         // main thread, the view reads these
         DispatchQueue.main.async {
@@ -120,26 +143,25 @@ extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
             self.latencyMs = latencyMs
             self.memoryMb = Metrics.memoryMb()
             self.fps = self.metrics.record(latencyMs: latencyMs, modelMs: modelMs,
-                                           faceCount: faces.count, precision: self.precision,
+                                           classified: classifying, faceCount: boxes.count,
+                                           precision: self.precision,
                                            resolution: self.highResolution ? "1080p" : "720p")
             self.busy = false
         }
     }
 
     // vision box -> layer coords
-    func convert(_ faces: [FaceProbabilities]) -> [FacePrediction] {
+    func convert(_ faces: [(CGRect, String, String, String)]) -> [FacePrediction] {
         var converted: [FacePrediction] = []
-        for face in faces {
-            var box = face.box
+        for (box, age, gender, expression) in faces {
+            var placed = box
             if let layer = previewLayer {
                 let flipped = CGRect(x: box.minX, y: 1 - box.maxY,
                                      width: box.width, height: box.height)
-                box = layer.layerRectConverted(fromMetadataOutputRect: flipped)
+                placed = layer.layerRectConverted(fromMetadataOutputRect: flipped)
             }
-            converted.append(FacePrediction(box: box,
-                                            age: label(face.age, ageBins),
-                                            gender: label(face.gender, genders),
-                                            expression: label(face.expression, expressions)))
+            converted.append(FacePrediction(box: placed, age: age,
+                                            gender: gender, expression: expression))
         }
         return converted
     }
@@ -201,8 +223,8 @@ struct CameraView: View {
                 HStack(spacing: 10) {
                     Button(camera.highResolution ? "1080p" : "720p", action: camera.toggleResolution)
 
-                    Button(camera.smoothing ? "smooth on" : "smooth off") {
-                        camera.smoothing.toggle()
+                    Button(camera.inferEvery == 1 ? "every frame" : "every \(camera.inferEvery)") {
+                        camera.inferEvery = camera.inferEvery == 1 ? 5 : 1
                     }
 
                     Menu(camera.precision) {

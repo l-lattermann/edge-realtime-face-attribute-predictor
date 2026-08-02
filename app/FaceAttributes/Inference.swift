@@ -11,13 +11,6 @@ let expressions = ["Surprise", "Fear", "Disgust", "Happiness", "Sadness", "Anger
 
 let precisions = ["fp32", "fp16", "int8"]
 
-struct FaceProbabilities {
-    var box: CGRect   // vision coords, origin bottom left
-    var expression: [Float]
-    var age: [Float]
-    var gender: [Float]
-}
-
 struct FacePrediction: Identifiable {
     let id = UUID()
     let box: CGRect   // layer coords
@@ -48,28 +41,27 @@ final class Inference {
         return try! VNCoreMLModel(for: try! MLModel(contentsOf: url, configuration: configuration))
     }
 
-    func predict(_ pixelBuffer: CVPixelBuffer,
-                 orientation: CGImagePropertyOrientation) -> [FaceProbabilities] {
-        let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer,
-                                            orientation: orientation, options: [:])
+    // landmarks are cheap, run on every frame
+    func detect(_ handler: VNImageRequestHandler) -> [CGRect] {
+        let request = VNDetectFaceRectanglesRequest()
+        try? handler.perform([request])
+        return (request.results ?? []).map { $0.boundingBox }
+    }
 
-        let faceRequest = VNDetectFaceRectanglesRequest()
-        try? handler.perform([faceRequest])
+    // the expensive half
+    func classify(_ handler: VNImageRequestHandler, box: CGRect) -> (String, String, String) {
+        // vision crops over the roi, no pixel copy here
+        let request = VNCoreMLRequest(model: model)
+        request.imageCropAndScaleOption = .scaleFill
+        request.regionOfInterest = widen(box)
+        try? handler.perform([request])
 
-        var faces: [FaceProbabilities] = []
-        for face in faceRequest.results ?? [] {
-            let request = VNCoreMLRequest(model: model)
-            request.imageCropAndScaleOption = .scaleFill
-            request.regionOfInterest = widen(face.boundingBox)
-            try? handler.perform([request])
-
-            guard let results = request.results as? [VNCoreMLFeatureValueObservation] else { continue }
-            faces.append(FaceProbabilities(box: face.boundingBox,
-                                           expression: softmax(results, "expression"),
-                                           age: softmax(results, "age"),
-                                           gender: softmax(results, "gender")))
+        guard let results = request.results as? [VNCoreMLFeatureValueObservation] else {
+            return ("?", "?", "?")
         }
-        return faces
+        return (label(softmax(results, "age"), ageBins),
+                label(softmax(results, "gender"), genders),
+                label(softmax(results, "expression"), expressions))
     }
 
     private func widen(_ box: CGRect) -> CGRect {
