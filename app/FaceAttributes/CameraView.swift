@@ -1,6 +1,7 @@
 //  CameraView.swift
 
 import AVFoundation
+import Combine
 import QuartzCore
 import SwiftUI
 import Vision
@@ -250,6 +251,17 @@ struct CameraView: View {
         .sheet(item: $shareItem) { item in
             ShareSheet(url: item.url)
         }
+    }
+}
+
+struct ShareSheet: UIViewControllerRepresentable {
+    let url: URL
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: [url], applicationActivities: nil)
+    }
+
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {
     }
 }
 
