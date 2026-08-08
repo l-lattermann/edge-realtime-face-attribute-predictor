@@ -46,7 +46,9 @@ final class CameraSession: NSObject, ObservableObject {
         queue.async { self.applyPreset() }
     }
 
-    func use(precision name: String) {
+    func nextPrecision() {
+        let current = precisions.firstIndex(of: precision) ?? 0
+        let name = precisions[(current + 1) % precisions.count]
         precision = name
         tracker.reset()
         queue.async { self.inference.use(precision: name) }
@@ -241,11 +243,7 @@ struct CameraView: View {
                         camera.inferEvery = camera.inferEvery == 1 ? 5 : 1
                     }
 
-                    Menu(camera.precision) {
-                        ForEach(precisions, id: \.self) { name in
-                            Button(name) { camera.use(precision: name) }
-                        }
-                    }
+                    Button(camera.precision) { camera.nextPrecision() }
 
                     Button("share \(camera.metrics.rowCount)") {
                         shareItem = ShareItem(url: camera.metrics.writeTemporaryFile())
