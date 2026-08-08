@@ -67,7 +67,11 @@ final class CameraSession: NSObject, ObservableObject {
 
         applyPreset()
         attachCamera()
-        session.startRunning()
+
+        // startRunning blocks, so not on the delegate queue
+        DispatchQueue.global().async {
+            self.session.startRunning()
+        }
     }
 
     // 720p is enough for the 224 crop, 1080 only helps far away
@@ -168,21 +172,30 @@ extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
     }
 }
 
+// backing layer IS the preview, so it allways has the right size
+final class PreviewUIView: UIView {
+    override class var layerClass: AnyClass {
+        AVCaptureVideoPreviewLayer.self
+    }
+
+    var previewLayer: AVCaptureVideoPreviewLayer {
+        layer as! AVCaptureVideoPreviewLayer
+    }
+}
+
 struct PreviewLayer: UIViewRepresentable {
     let camera: CameraSession
 
-    func makeUIView(context: Context) -> UIView {
-        let view = UIView()
-        let layer = AVCaptureVideoPreviewLayer(session: camera.session)
-        layer.videoGravity = .resizeAspectFill
-        view.layer.addSublayer(layer)
+    func makeUIView(context: Context) -> PreviewUIView {
+        let view = PreviewUIView()
+        view.previewLayer.session = camera.session
+        view.previewLayer.videoGravity = .resizeAspectFill
 
-        camera.previewLayer = layer
+        camera.previewLayer = view.previewLayer
         return view
     }
 
-    func updateUIView(_ view: UIView, context: Context) {
-        view.layer.sublayers?.first?.frame = view.bounds
+    func updateUIView(_ view: PreviewUIView, context: Context) {
     }
 }
 
