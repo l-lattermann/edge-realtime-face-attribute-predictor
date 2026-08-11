@@ -26,6 +26,7 @@ final class CameraSession: NSObject, ObservableObject {
     private let queue = DispatchQueue(label: "camera")
     private var busy = false
     private var frameCount = 0
+    private let portraitAngle = 90.0   // sensor turn for portrait
 
     func start() {
         AVCaptureDevice.requestAccess(for: .video) { granted in
@@ -96,6 +97,21 @@ final class CameraSession: NSObject, ObservableObject {
             session.addInput(input)
         }
         session.commitConfiguration()
+
+        // sensor sits sideways, rotate here so vision and the layer share one coord system
+        if let connection = output.connection(with: .video) {
+            if connection.isVideoRotationAngleSupported(portraitAngle) {
+                connection.videoRotationAngle = portraitAngle
+            }
+            connection.automaticallyAdjustsVideoMirroring = false
+            connection.isVideoMirrored = usingFrontCamera
+        }
+        DispatchQueue.main.async {
+            if let connection = self.previewLayer?.connection,
+               connection.isVideoRotationAngleSupported(self.portraitAngle) {
+                connection.videoRotationAngle = self.portraitAngle
+            }
+        }
     }
 }
 
@@ -112,9 +128,8 @@ extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
         // clock starts here, latency is the whole frame not only the model
         let frameStart = CACurrentMediaTime()
 
-        let orientation: CGImagePropertyOrientation = usingFrontCamera ? .leftMirrored : .right
         let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer,
-                                            orientation: orientation, options: [:])
+                                            orientation: .up, options: [:])
 
         // detect every frame so the box does not stutter
         let boxes = inference.detect(handler)
