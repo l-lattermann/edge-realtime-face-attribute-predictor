@@ -15,6 +15,7 @@ final class CameraSession: NSObject, ObservableObject {
     @Published var highResolution = false
     @Published var inferEvery = 5   // classify every nth frame, detect on all
     @Published var precision = "fp16"
+    @Published var bufferSize = CGSize.zero
 
     let session = AVCaptureSession()
     let metrics = Metrics()
@@ -27,6 +28,11 @@ final class CameraSession: NSObject, ObservableObject {
     private var busy = false
     private var frameCount = 0
     private let portraitAngle = 90.0   // sensor turn for portrait
+    private let displayWindowSeconds = 2.0   // readout holds this long
+    private var displaySince = CACurrentMediaTime()
+    private var displayLatencySum = 0.0
+    private var displayFpsSum = 0.0
+    private var displayFrames = 0
 
     func start() {
         AVCaptureDevice.requestAccess(for: .video) { granted in
@@ -125,6 +131,9 @@ extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
         }
         busy = true
 
+        let frameSize = CGSize(width: CVPixelBufferGetWidth(pixelBuffer),
+                               height: CVPixelBufferGetHeight(pixelBuffer))
+
         // clock starts here, latency is the whole frame not only the model
         let frameStart = CACurrentMediaTime()
 
@@ -137,20 +146,20 @@ extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
         frameCount = frameCount + 1
         let classifying = frameCount % inferEvery == 0
 
-        var faces: [(CGRect, String, String, String)] = []
+        var faces: [(DetectedFace, String, String, String)] = []
         let modelStart = CACurrentMediaTime()
 
         if classifying {
-            for box in boxes {
-                let (age, gender, expression) = inference.classify(handler, box: box)
-                faces.append((box, age, gender, expression))
+            for face in boxes {
+                let (age, gender, expression) = inference.classify(handler, box: face.box)
+                faces.append((face, age, gender, expression))
             }
             tracker.remember(faces)
         } else {
             // reuse the labels of the last classified frame
-            for box in boxes {
-                let carried = tracker.labels(for: box) ?? ("", "", "")
-                faces.append((box, carried.0, carried.1, carried.2))
+            for face in boxes {
+                let carried = tracker.labels(for: face.box) ?? ("", "", "")
+                faces.append((face, carried.0, carried.1, carried.2))
             }
         }
 
@@ -159,30 +168,62 @@ extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
 
         // main thread, the view reads these
         DispatchQueue.main.async {
-            self.predictions = self.convert(faces)
+            self.bufferSize = frameSize
+            self.predictions = self.convert(faces, frameSize)
 
             let latencyMs = (CACurrentMediaTime() - frameStart) * 1000
-            self.latencyMs = latencyMs
-            self.memoryMb = Metrics.memoryMb()
-            self.fps = self.metrics.record(latencyMs: latencyMs, modelMs: modelMs,
-                                           classified: classifying, faceCount: boxes.count,
-                                           precision: self.precision,
-                                           resolution: self.highResolution ? "1080p" : "720p")
+            let fps = self.metrics.record(latencyMs: latencyMs, modelMs: modelMs,
+                                          classified: classifying, faceCount: boxes.count,
+                                          precision: self.precision,
+                                          resolution: self.highResolution ? "1080p" : "720p")
+            self.publishReadout(latencyMs: latencyMs, fps: fps)
             self.busy = false
         }
     }
 
+    private func publishReadout(latencyMs: Double, fps: Double) {
+        displayLatencySum = displayLatencySum + latencyMs
+        displayFpsSum = displayFpsSum + fps
+        displayFrames = displayFrames + 1
+
+        let elapsed = CACurrentMediaTime() - displaySince
+        if elapsed < displayWindowSeconds {
+            return
+        }
+
+        self.latencyMs = displayLatencySum / Double(displayFrames)
+        self.fps = displayFpsSum / Double(displayFrames)
+        self.memoryMb = Metrics.memoryMb()
+
+        displayLatencySum = 0
+        displayFpsSum = 0
+        displayFrames = 0
+        displaySince = CACurrentMediaTime()
+    }
+
     // vision box -> layer coords
-    func convert(_ faces: [(CGRect, String, String, String)]) -> [FacePrediction] {
+    func convert(_ faces: [(DetectedFace, String, String, String)], _ frame: CGSize) -> [FacePrediction] {
+        let view = previewLayer?.bounds.size ?? .zero
+        if view.width == 0 || frame.width == 0 {
+            return []
+        }
+
+        // aspectFill covers both sides, so the bigger factor wins
+        let scale = max(view.width / frame.width, view.height / frame.height)
+        let shownWidth = frame.width * scale
+        let shownHeight = frame.height * scale
+        let offsetX = (view.width - shownWidth) / 2   // negative, the overhang is cropped
+        let offsetY = (view.height - shownHeight) / 2
+
         var converted: [FacePrediction] = []
-        for (box, age, gender, expression) in faces {
-            var placed = box
-            if let layer = previewLayer {
-                let flipped = CGRect(x: box.minX, y: 1 - box.maxY,
-                                     width: box.width, height: box.height)
-                placed = layer.layerRectConverted(fromMetadataOutputRect: flipped)
-            }
-            converted.append(FacePrediction(box: placed, age: age,
+        for (face, age, gender, expression) in faces {
+            // vision counts from bottom left, the layer from top left
+            let box = face.box
+            let placed = CGRect(x: box.minX * shownWidth + offsetX,
+                                y: (1 - box.maxY) * shownHeight + offsetY,
+                                width: box.width * shownWidth,
+                                height: box.height * shownHeight)
+            converted.append(FacePrediction(box: placed, roll: face.roll, age: age,
                                             gender: gender, expression: expression))
         }
         return converted
@@ -229,9 +270,10 @@ struct CameraView: View {
 
             VStack {
                 HStack(alignment: .top) {
-                    Text(String(format: "%.0f fps\n%.1f ms\n%d faces\n%.0f MB",
+                    Text(String(format: "%.0f fps\n%.1f ms\n%d faces\n%.0f MB\n%.0fx%.0f",
                                 camera.fps, camera.latencyMs,
-                                camera.predictions.count, camera.memoryMb))
+                                camera.predictions.count, camera.memoryMb,
+                                camera.bufferSize.width, camera.bufferSize.height))
                         .font(.system(.caption, design: .monospaced))
                         .padding(6)
                         .background(.black.opacity(0.6))

@@ -14,8 +14,8 @@ final class Tracker {
         labels = []
     }
 
-    func remember(_ predictions: [(CGRect, String, String, String)]) {
-        boxes = predictions.map { $0.0 }
+    func remember(_ predictions: [(DetectedFace, String, String, String)]) {
+        boxes = predictions.map { $0.0.box }
         labels = predictions.map { ($0.1, $0.2, $0.3) }
     }
 

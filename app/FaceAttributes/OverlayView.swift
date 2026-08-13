@@ -13,6 +13,7 @@ struct OverlayView: View {
                 Rectangle()
                     .stroke(.green, lineWidth: 2)
                     .frame(width: box.width, height: box.height)
+                    .rotationEffect(.radians(-prediction.roll))   // vision turns the other way
                     .position(x: box.midX, y: box.midY)
 
                 VStack(alignment: .leading, spacing: 1) {

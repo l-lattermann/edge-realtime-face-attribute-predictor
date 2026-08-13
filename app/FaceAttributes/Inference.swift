@@ -11,9 +11,16 @@ let expressions = ["Surprise", "Fear", "Disgust", "Happiness", "Sadness", "Anger
 
 let precisions = ["fp32", "fp16", "int8"]
 
+// as vision sees it, before conversion
+struct DetectedFace {
+    let box: CGRect   // vision coords
+    let roll: Double   // radians, head tilt
+}
+
 struct FacePrediction: Identifiable {
     let id = UUID()
     let box: CGRect   // layer coords
+    let roll: Double
     let age: String
     let gender: String
     let expression: String
@@ -41,11 +48,31 @@ final class Inference {
         return try! VNCoreMLModel(for: try! MLModel(contentsOf: url, configuration: configuration))
     }
 
-    // landmarks are cheap, run on every frame
-    func detect(_ handler: VNImageRequestHandler) -> [CGRect] {
-        let request = VNDetectFaceRectanglesRequest()
+    func detect(_ handler: VNImageRequestHandler) -> [DetectedFace] {
+        let request = VNDetectFaceLandmarksRequest()
         try? handler.perform([request])
-        return (request.results ?? []).map { $0.boundingBox }
+
+        var faces: [DetectedFace] = []
+        for observation in request.results ?? [] {
+            // vision box goes chin to eyebrows, so its centre is near the mouth
+            var box = observation.boundingBox
+            if let nose = observation.landmarks?.nose {
+                var sumX = 0.0
+                var sumY = 0.0
+                for point in nose.normalizedPoints {
+                    sumX = sumX + Double(point.x)
+                    sumY = sumY + Double(point.y)
+                }
+
+                // landmarks are relative to the box, lift them into image coords
+                let count = Double(nose.pointCount)
+                let noseX = box.minX + sumX / count * box.width
+                let noseY = box.minY + sumY / count * box.height
+                box = box.offsetBy(dx: noseX - box.midX, dy: noseY - box.midY)
+            }
+            faces.append(DetectedFace(box: box, roll: observation.roll?.doubleValue ?? 0))
+        }
+        return faces
     }
 
     // the expensive half
