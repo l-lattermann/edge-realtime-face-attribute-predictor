@@ -71,8 +71,7 @@ final class Inference {
 
             // eye line gives a smooth angle, observation.roll jumps
             let roll = eyeAngle(landmarks, box, frame)
-            guard let nose = landmarks.nose else { continue }
-            faces.append(headBox(xs, ys, centre(nose, box, frame), roll, frame))
+            faces.append(headBox(xs, ys, roll, frame))
         }
         return faces
     }
@@ -97,22 +96,40 @@ final class Inference {
         return CGPoint(x: sumX / count, y: sumY / count)
     }
 
-    private func headBox(_ xs: [Double], _ ys: [Double], _ nose: CGPoint,
+    private func headBox(_ xs: [Double], _ ys: [Double],
                          _ roll: Double, _ frame: CGSize) -> DetectedFace {
-        var minU = Double.infinity, maxU = -Double.infinity
+        var pivotX = 0.0
+        var pivotY = 0.0
         for i in 0..<xs.count {
-            let dx = xs[i] - nose.x
-            let dy = ys[i] - nose.y
+            pivotX = pivotX + xs[i]
+            pivotY = pivotY + ys[i]
+        }
+        pivotX = pivotX / Double(xs.count)
+        pivotY = pivotY / Double(ys.count)
+
+        var minU = Double.infinity, maxU = -Double.infinity
+        var minV = Double.infinity
+        for i in 0..<xs.count {
+            let dx = xs[i] - pivotX
+            let dy = ys[i] - pivotY
             let u = dx * cos(-roll) - dy * sin(-roll)
+            let v = dx * sin(-roll) + dy * cos(-roll)
             minU = min(minU, u); maxU = max(maxU, u)
+            minV = min(minV, v)
         }
 
         // one unit = half face width, so the box is 2 wide and 3 high
         let unit = (maxU - minU) / 2
         let sizePx = CGSize(width: 2 * unit, height: 3 * unit)
 
-        let centerX = nose.x - 0.5 * unit * sin(roll)
-        let centerY = nose.y + 0.5 * unit * cos(roll)
+        // lowest landmark is the chin, the box stands on it
+        let bottomV = minV - 0.1 * unit
+        let midU = (minU + maxU) / 2
+        let midV = bottomV + 1.5 * unit
+
+        // centre rotated back into image coords
+        let centerX = pivotX + midU * cos(roll) - midV * sin(roll)
+        let centerY = pivotY + midU * sin(roll) + midV * cos(roll)
         let center = CGPoint(x: centerX / frame.width, y: centerY / frame.height)
 
         // upright hull because a roi cannot be rotated
