@@ -11,15 +11,17 @@ let expressions = ["Surprise", "Fear", "Disgust", "Happiness", "Sadness", "Anger
 
 let precisions = ["fp32", "fp16", "int8"]
 
-// as vision sees it, before conversion
+// measured along the head axes, not the image axes
 struct DetectedFace {
-    let box: CGRect   // vision coords
+    let center: CGPoint   // normalised, origin bottom left
+    let sizePx: CGSize   // px, along the head axes
     let roll: Double   // radians, head tilt
+    let cropBox: CGRect   // upright hull, this goes into core ml
 }
 
 struct FacePrediction: Identifiable {
     let id = UUID()
-    let box: CGRect   // layer coords
+    let box: CGRect   // layer coords, before the tilt
     let roll: Double
     let age: String
     let gender: String
@@ -48,31 +50,80 @@ final class Inference {
         return try! VNCoreMLModel(for: try! MLModel(contentsOf: url, configuration: configuration))
     }
 
-    func detect(_ handler: VNImageRequestHandler) -> [DetectedFace] {
+    // landmarks give tilt + the real head size
+    func detect(_ handler: VNImageRequestHandler, frame: CGSize) -> [DetectedFace] {
         let request = VNDetectFaceLandmarksRequest()
         try? handler.perform([request])
 
         var faces: [DetectedFace] = []
         for observation in request.results ?? [] {
-            // vision box goes chin to eyebrows, so its centre is near the mouth
-            var box = observation.boundingBox
-            if let nose = observation.landmarks?.nose {
-                var sumX = 0.0
-                var sumY = 0.0
-                for point in nose.normalizedPoints {
-                    sumX = sumX + Double(point.x)
-                    sumY = sumY + Double(point.y)
-                }
+            guard let landmarks = observation.landmarks,
+                  let all = landmarks.allPoints else { continue }
+            let box = observation.boundingBox
 
-                // landmarks are relative to the box, lift them into image coords
-                let count = Double(nose.pointCount)
-                let noseX = box.minX + sumX / count * box.width
-                let noseY = box.minY + sumY / count * box.height
-                box = box.offsetBy(dx: noseX - box.midX, dy: noseY - box.midY)
+            // work in px, otherwise 720x1280 distorts the angles
+            var xs: [Double] = []
+            var ys: [Double] = []
+            for point in all.normalizedPoints {
+                xs.append((box.minX + Double(point.x) * box.width) * frame.width)
+                ys.append((box.minY + Double(point.y) * box.height) * frame.height)
             }
-            faces.append(DetectedFace(box: box, roll: observation.roll?.doubleValue ?? 0))
+
+            // eye line gives a smooth angle, observation.roll jumps
+            let roll = eyeAngle(landmarks, box, frame)
+            guard let nose = landmarks.nose else { continue }
+            faces.append(headBox(xs, ys, centre(nose, box, frame), roll, frame))
         }
         return faces
+    }
+
+    // angle eye to eye
+    private func eyeAngle(_ landmarks: VNFaceLandmarks2D, _ box: CGRect, _ frame: CGSize) -> Double {
+        guard let left = landmarks.leftEye, let right = landmarks.rightEye else { return 0 }
+        let a = centre(left, box, frame)
+        let b = centre(right, box, frame)
+        return atan2(b.y - a.y, b.x - a.x)
+    }
+
+    // marks the mean point of one landmark region
+    private func centre(_ region: VNFaceLandmarkRegion2D, _ box: CGRect, _ frame: CGSize) -> CGPoint {
+        var sumX = 0.0
+        var sumY = 0.0
+        for point in region.normalizedPoints {
+            sumX = sumX + (box.minX + Double(point.x) * box.width) * frame.width
+            sumY = sumY + (box.minY + Double(point.y) * box.height) * frame.height
+        }
+        let count = Double(region.pointCount)
+        return CGPoint(x: sumX / count, y: sumY / count)
+    }
+
+    private func headBox(_ xs: [Double], _ ys: [Double], _ nose: CGPoint,
+                         _ roll: Double, _ frame: CGSize) -> DetectedFace {
+        var minU = Double.infinity, maxU = -Double.infinity
+        for i in 0..<xs.count {
+            let dx = xs[i] - nose.x
+            let dy = ys[i] - nose.y
+            let u = dx * cos(-roll) - dy * sin(-roll)
+            minU = min(minU, u); maxU = max(maxU, u)
+        }
+
+        // one unit = half face width, so the box is 2 wide and 3 high
+        let unit = (maxU - minU) / 2
+        let sizePx = CGSize(width: 2 * unit, height: 3 * unit)
+
+        let centerX = nose.x - 0.5 * unit * sin(roll)
+        let centerY = nose.y + 0.5 * unit * cos(roll)
+        let center = CGPoint(x: centerX / frame.width, y: centerY / frame.height)
+
+        // upright hull because a roi cannot be rotated
+        let hullWidth = abs(sizePx.width * cos(roll)) + abs(sizePx.height * sin(roll))
+        let hullHeight = abs(sizePx.width * sin(roll)) + abs(sizePx.height * cos(roll))
+        let cropBox = CGRect(x: center.x - hullWidth / frame.width / 2,
+                             y: center.y - hullHeight / frame.height / 2,
+                             width: hullWidth / frame.width,
+                             height: hullHeight / frame.height)
+
+        return DetectedFace(center: center, sizePx: sizePx, roll: roll, cropBox: cropBox)
     }
 
     // the expensive half

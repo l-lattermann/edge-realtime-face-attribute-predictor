@@ -28,7 +28,7 @@ final class CameraSession: NSObject, ObservableObject {
     private var busy = false
     private var frameCount = 0
     private let portraitAngle = 90.0   // sensor turn for portrait
-    private let displayWindowSeconds = 2.0   // readout holds this long
+    private let displayWindowSeconds = 1.0   // readout holds this long
     private var displaySince = CACurrentMediaTime()
     private var displayLatencySum = 0.0
     private var displayFpsSum = 0.0
@@ -141,7 +141,7 @@ extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
                                             orientation: .up, options: [:])
 
         // detect every frame so the box does not stutter
-        let boxes = inference.detect(handler)
+        let boxes = inference.detect(handler, frame: frameSize)
 
         frameCount = frameCount + 1
         let classifying = frameCount % inferEvery == 0
@@ -151,14 +151,14 @@ extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
 
         if classifying {
             for face in boxes {
-                let (age, gender, expression) = inference.classify(handler, box: face.box)
+                let (age, gender, expression) = inference.classify(handler, box: face.cropBox)
                 faces.append((face, age, gender, expression))
             }
             tracker.remember(faces)
         } else {
             // reuse the labels of the last classified frame
             for face in boxes {
-                let carried = tracker.labels(for: face.box) ?? ("", "", "")
+                let carried = tracker.labels(for: face.cropBox) ?? ("", "", "")
                 faces.append((face, carried.0, carried.1, carried.2))
             }
         }
@@ -218,11 +218,13 @@ extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
         var converted: [FacePrediction] = []
         for (face, age, gender, expression) in faces {
             // vision counts from bottom left, the layer from top left
-            let box = face.box
-            let placed = CGRect(x: box.minX * shownWidth + offsetX,
-                                y: (1 - box.maxY) * shownHeight + offsetY,
-                                width: box.width * shownWidth,
-                                height: box.height * shownHeight)
+            let midX = face.center.x * shownWidth + offsetX
+            let midY = (1 - face.center.y) * shownHeight + offsetY
+
+            let width = face.sizePx.width * scale
+            let height = face.sizePx.height * scale
+            let placed = CGRect(x: midX - width / 2, y: midY - height / 2,
+                                width: width, height: height)
             converted.append(FacePrediction(box: placed, roll: face.roll, age: age,
                                             gender: gender, expression: expression))
         }
