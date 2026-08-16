@@ -108,24 +108,24 @@ final class Inference {
         pivotY = pivotY / Double(ys.count)
 
         var minU = Double.infinity, maxU = -Double.infinity
-        var minV = Double.infinity
+        var maxV = -Double.infinity
         for i in 0..<xs.count {
             let dx = xs[i] - pivotX
             let dy = ys[i] - pivotY
             let u = dx * cos(-roll) - dy * sin(-roll)
             let v = dx * sin(-roll) + dy * cos(-roll)
             minU = min(minU, u); maxU = max(maxU, u)
-            minV = min(minV, v)
+            maxV = max(maxV, v)
         }
 
         // one unit = half face width, so the box is 2 wide and 3 high
         let unit = (maxU - minU) / 2
         let sizePx = CGSize(width: 2 * unit, height: 3 * unit)
 
-        // lowest landmark is the chin, the box stands on it
-        let bottomV = minV - 0.1 * unit
+        // v grows down here, so the chin is the biggest value
+        let bottomV = maxV + 0.1 * unit
         let midU = (minU + maxU) / 2
-        let midV = bottomV + 1.5 * unit
+        let midV = bottomV - 1.5 * unit
 
         // centre rotated back into image coords
         let centerX = pivotX + midU * cos(roll) - midV * sin(roll)
