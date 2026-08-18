@@ -17,12 +17,14 @@ struct DetectedFace {
     let sizePx: CGSize   // px, along the head axes
     let roll: Double   // radians, head tilt
     let cropBox: CGRect   // upright hull, this goes into core ml
+    let landmarks: [CGPoint]   // DEBUG REMOVE
 }
 
 struct FacePrediction: Identifiable {
     let id = UUID()
     let box: CGRect   // layer coords, before the tilt
     let roll: Double
+    let landmarks: [CGPoint]   // DEBUG REMOVE
     let age: String
     let gender: String
     let expression: String
@@ -138,7 +140,14 @@ final class Inference {
                              width: hullWidth / frame.width,
                              height: hullHeight / frame.height)
 
-        return DetectedFace(center: center, sizePx: sizePx, roll: roll, cropBox: cropBox)
+        // DEBUG REMOVE: raw points through to the overlay
+        var landmarks: [CGPoint] = []
+        for i in 0..<xs.count {
+            landmarks.append(CGPoint(x: xs[i] / frame.width, y: ys[i] / frame.height))
+        }
+
+        return DetectedFace(center: center, sizePx: sizePx, roll: roll,
+                            cropBox: cropBox, landmarks: landmarks)
     }
 
     // the expensive half

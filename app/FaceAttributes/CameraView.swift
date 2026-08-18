@@ -225,8 +225,15 @@ extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
             let height = face.sizePx.height * scale
             let placed = CGRect(x: midX - width / 2, y: midY - height / 2,
                                 width: width, height: height)
-            converted.append(FacePrediction(box: placed, roll: face.roll, age: age,
-                                            gender: gender, expression: expression))
+            // DEBUG REMOVE: same mapping for every landmark
+            var landmarks: [CGPoint] = []
+            for point in face.landmarks {
+                landmarks.append(CGPoint(x: point.x * shownWidth + offsetX,
+                                         y: (1 - point.y) * shownHeight + offsetY))
+            }
+
+            converted.append(FacePrediction(box: placed, roll: face.roll, landmarks: landmarks,
+                                            age: age, gender: gender, expression: expression))
         }
         return converted
     }

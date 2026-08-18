@@ -2,6 +2,9 @@
 
 import SwiftUI
 
+// DEBUG REMOVE: draw every landmark as a dot
+let showLandmarks = true
+
 struct OverlayView: View {
     let predictions: [FacePrediction]
 
@@ -28,6 +31,16 @@ struct OverlayView: View {
                 }
                 .rotationEffect(.radians(-prediction.roll))   // vision turns the other way
                 .position(x: box.midX, y: box.midY)
+
+                // DEBUG REMOVE: landmarks allready in layer coords
+                if showLandmarks {
+                    ForEach(0..<prediction.landmarks.count, id: \.self) { i in
+                        Circle()
+                            .fill(i == 0 ? .red : .yellow)
+                            .frame(width: 3, height: 3)
+                            .position(prediction.landmarks[i])
+                    }
+                }
             }
         }
     }
