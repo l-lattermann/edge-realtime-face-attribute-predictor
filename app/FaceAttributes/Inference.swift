@@ -61,38 +61,37 @@ final class Inference {
         for observation in request.results ?? [] {
             guard let landmarks = observation.landmarks,
                   let all = landmarks.allPoints else { continue }
-            let box = observation.boundingBox
 
-            // work in px, otherwise 720x1280 distorts the angles
+            // pointsInImage maps to px, no angle gets distorted
             var xs: [Double] = []
             var ys: [Double] = []
-            for point in all.normalizedPoints {
-                xs.append((box.minX + Double(point.x) * box.width) * frame.width)
-                ys.append((box.minY + Double(point.y) * box.height) * frame.height)
+            for point in all.pointsInImage(imageSize: frame) {
+                xs.append(Double(point.x))
+                ys.append(Double(point.y))
             }
 
             // eye line gives a smooth angle, observation.roll jumps
-            let roll = eyeAngle(landmarks, box, frame)
+            let roll = eyeAngle(landmarks, frame)
             faces.append(headBox(xs, ys, roll, frame))
         }
         return faces
     }
 
     // angle eye to eye
-    private func eyeAngle(_ landmarks: VNFaceLandmarks2D, _ box: CGRect, _ frame: CGSize) -> Double {
+    private func eyeAngle(_ landmarks: VNFaceLandmarks2D, _ frame: CGSize) -> Double {
         guard let left = landmarks.leftEye, let right = landmarks.rightEye else { return 0 }
-        let a = centre(left, box, frame)
-        let b = centre(right, box, frame)
+        let a = centre(left, frame)
+        let b = centre(right, frame)
         return atan2(b.y - a.y, b.x - a.x)
     }
 
     // marks the mean point of one landmark region
-    private func centre(_ region: VNFaceLandmarkRegion2D, _ box: CGRect, _ frame: CGSize) -> CGPoint {
+    private func centre(_ region: VNFaceLandmarkRegion2D, _ frame: CGSize) -> CGPoint {
         var sumX = 0.0
         var sumY = 0.0
-        for point in region.normalizedPoints {
-            sumX = sumX + (box.minX + Double(point.x) * box.width) * frame.width
-            sumY = sumY + (box.minY + Double(point.y) * box.height) * frame.height
+        for point in region.pointsInImage(imageSize: frame) {
+            sumX = sumX + Double(point.x)
+            sumY = sumY + Double(point.y)
         }
         let count = Double(region.pointCount)
         return CGPoint(x: sumX / count, y: sumY / count)
