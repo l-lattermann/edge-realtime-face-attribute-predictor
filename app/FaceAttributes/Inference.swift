@@ -125,8 +125,9 @@ final class Inference {
         let unit = (maxU - minU) / 2
         let sizePx = CGSize(width: 2 * unit, height: 3 * unit)
 
+        // vision counts up, so the chin is the smallest v
         let midU = (minU + maxU) / 2
-        let midV = (minV + maxV) / 2
+        let midV = minV - 0.1 * unit + 1.5 * unit
 
         // centre rotated back into image coords
         let centerX = pivotX + midU * cos(roll) - midV * sin(roll)
