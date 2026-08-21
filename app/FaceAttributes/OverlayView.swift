@@ -7,9 +7,18 @@ let showLandmarks = true
 
 struct OverlayView: View {
     let predictions: [FacePrediction]
+    let fullFrame: CGRect   // DEBUG REMOVE
 
     var body: some View {
         ZStack {
+            // DEBUG REMOVE: must sit exactly on the visible image
+            if showLandmarks {
+                Rectangle()
+                    .stroke(.white, lineWidth: 2)
+                    .frame(width: fullFrame.width, height: fullFrame.height)
+                    .position(x: fullFrame.midX, y: fullFrame.midY)
+            }
+
             ForEach(predictions) { prediction in
                 let box = prediction.box
 
@@ -31,6 +40,14 @@ struct OverlayView: View {
                 }
                 .rotationEffect(.radians(-prediction.roll))   // vision turns the other way
                 .position(x: box.midX, y: box.midY)
+
+                // DEBUG REMOVE: vision box untouched, mapping error vs maths error
+                if showLandmarks {
+                    Rectangle()
+                        .stroke(.blue, lineWidth: 2)
+                        .frame(width: prediction.rawBox.width, height: prediction.rawBox.height)
+                        .position(x: prediction.rawBox.midX, y: prediction.rawBox.midY)
+                }
 
                 // DEBUG REMOVE: landmarks allready in layer coords
                 if showLandmarks {

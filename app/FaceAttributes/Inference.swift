@@ -18,6 +18,7 @@ struct DetectedFace {
     let roll: Double   // radians, head tilt
     let cropBox: CGRect   // upright hull, this goes into core ml
     let landmarks: [CGPoint]   // DEBUG REMOVE
+    let visionBox: CGRect   // DEBUG REMOVE
 }
 
 struct FacePrediction: Identifiable {
@@ -25,6 +26,7 @@ struct FacePrediction: Identifiable {
     let box: CGRect   // layer coords, before the tilt
     let roll: Double
     let landmarks: [CGPoint]   // DEBUG REMOVE
+    let rawBox: CGRect   // DEBUG REMOVE
     let age: String
     let gender: String
     let expression: String
@@ -72,7 +74,7 @@ final class Inference {
 
             // eye line gives a smooth angle, observation.roll jumps
             let roll = eyeAngle(landmarks, frame)
-            faces.append(headBox(xs, ys, roll, frame))
+            faces.append(headBox(xs, ys, roll, frame, observation.boundingBox))
         }
         return faces
     }
@@ -97,8 +99,8 @@ final class Inference {
         return CGPoint(x: sumX / count, y: sumY / count)
     }
 
-    private func headBox(_ xs: [Double], _ ys: [Double],
-                         _ roll: Double, _ frame: CGSize) -> DetectedFace {
+    private func headBox(_ xs: [Double], _ ys: [Double], _ roll: Double,
+                         _ frame: CGSize, _ visionBox: CGRect) -> DetectedFace {
         var pivotX = 0.0
         var pivotY = 0.0
         for i in 0..<xs.count {
@@ -146,7 +148,7 @@ final class Inference {
         }
 
         return DetectedFace(center: center, sizePx: sizePx, roll: roll,
-                            cropBox: cropBox, landmarks: landmarks)
+                            cropBox: cropBox, landmarks: landmarks, visionBox: visionBox)
     }
 
     // the expensive half
