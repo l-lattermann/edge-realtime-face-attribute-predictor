@@ -15,8 +15,6 @@ final class CameraSession: NSObject, ObservableObject {
     @Published var highResolution = false
     @Published var inferEvery = 5   // classify every nth frame, detect on all
     @Published var precision = "fp16"
-    @Published var bufferSize = CGSize.zero
-    @Published var fullFrame = CGRect.zero   // DEBUG REMOVE
 
     let session = AVCaptureSession()
     let metrics = Metrics()
@@ -169,9 +167,7 @@ extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
 
         // main thread, the view reads these
         DispatchQueue.main.async {
-            self.bufferSize = frameSize
             self.predictions = self.convert(faces, frameSize)
-            self.fullFrame = self.mapWholeFrame(frameSize)
 
             let latencyMs = (CACurrentMediaTime() - frameStart) * 1000
             let fps = self.metrics.record(latencyMs: latencyMs, modelMs: modelMs,
@@ -203,19 +199,6 @@ extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
         displaySince = CACurrentMediaTime()
     }
 
-    // DEBUG REMOVE: whole frame same mapping, must line up
-    func mapWholeFrame(_ frame: CGSize) -> CGRect {
-        let view = previewLayer?.bounds.size ?? .zero
-        if view.width == 0 || frame.width == 0 {
-            return .zero
-        }
-        let scale = max(view.width / frame.width, view.height / frame.height)
-        let shownWidth = frame.width * scale
-        let shownHeight = frame.height * scale
-        return CGRect(x: (view.width - shownWidth) / 2, y: (view.height - shownHeight) / 2,
-                      width: shownWidth, height: shownHeight)
-    }
-
     // vision box -> layer coords
     func convert(_ faces: [(DetectedFace, String, String, String)], _ frame: CGSize) -> [FacePrediction] {
         let view = previewLayer?.bounds.size ?? .zero
@@ -240,23 +223,8 @@ extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
             let height = face.sizePx.height * scale
             let placed = CGRect(x: midX - width / 2, y: midY - height / 2,
                                 width: width, height: height)
-            // DEBUG REMOVE: same mapping for every landmark
-            var landmarks: [CGPoint] = []
-            for point in face.landmarks {
-                landmarks.append(CGPoint(x: point.x * shownWidth + offsetX,
-                                         y: (1 - point.y) * shownHeight + offsetY))
-            }
-
-            // DEBUG REMOVE: vision box through the same mapping
-            let v = face.visionBox
-            let rawBox = CGRect(x: v.minX * shownWidth + offsetX,
-                                y: (1 - v.maxY) * shownHeight + offsetY,
-                                width: v.width * shownWidth,
-                                height: v.height * shownHeight)
-
-            converted.append(FacePrediction(box: placed, roll: face.roll, landmarks: landmarks,
-                                            rawBox: rawBox, age: age, gender: gender,
-                                            expression: expression))
+            converted.append(FacePrediction(box: placed, roll: face.roll, age: age,
+                                            gender: gender, expression: expression))
         }
         return converted
     }
@@ -298,15 +266,14 @@ struct CameraView: View {
             PreviewLayer(camera: camera)
                 .ignoresSafeArea()
 
-            OverlayView(predictions: camera.predictions, fullFrame: camera.fullFrame)
+            OverlayView(predictions: camera.predictions)
                 .ignoresSafeArea()
 
             VStack {
                 HStack(alignment: .top) {
-                    Text(String(format: "%.0f fps\n%.1f ms\n%d faces\n%.0f MB\n%.0fx%.0f",
+                    Text(String(format: "%.0f fps\n%.1f ms\n%d faces\n%.0f MB",
                                 camera.fps, camera.latencyMs,
-                                camera.predictions.count, camera.memoryMb,
-                                camera.bufferSize.width, camera.bufferSize.height))
+                                camera.predictions.count, camera.memoryMb))
                         .font(.system(.caption, design: .monospaced))
                         .padding(6)
                         .background(.black.opacity(0.6))
