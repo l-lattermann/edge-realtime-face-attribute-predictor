@@ -299,6 +299,7 @@ struct CameraView: View {
                 .ignoresSafeArea()
 
             OverlayView(predictions: camera.predictions, fullFrame: camera.fullFrame)
+                .ignoresSafeArea()
 
             VStack {
                 HStack(alignment: .top) {
