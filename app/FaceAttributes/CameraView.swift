@@ -156,12 +156,12 @@ extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
                                             orientation: .up, options: [:])
 
         // detect every frame so the box does not stutter
-        let boxes = inference.detect(handler, frame: frameSize)
+        let tilt = gravityAngle
+        let boxes = inference.detect(handler, frame: frameSize, tilt: tilt)
 
         frameCount = frameCount + 1
         let classifying = frameCount % inferEvery == 0
 
-        let tilt = gravityAngle
         var faces: [(DetectedFace, String, String, String)] = []
         let modelStart = CACurrentMediaTime()
 
@@ -233,14 +233,14 @@ extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
 
         var converted: [FacePrediction] = []
         for (face, age, gender, expression) in faces {
-            // draws the upright hull, same rect that core ml gets
-            let box = face.cropBox
-
             // vision counts from bottom left, the layer from top left
-            let placed = CGRect(x: box.minX * shownWidth + offsetX,
-                                y: (1 - box.maxY) * shownHeight + offsetY,
-                                width: box.width * shownWidth,
-                                height: box.height * shownHeight)
+            let midX = face.center.x * shownWidth + offsetX
+            let midY = (1 - face.center.y) * shownHeight + offsetY
+
+            let width = face.sizePx.width * scale
+            let height = face.sizePx.height * scale
+            let placed = CGRect(x: midX - width / 2, y: midY - height / 2,
+                                width: width, height: height)
             converted.append(FacePrediction(box: placed, tilt: tilt, age: age,
                                             gender: gender, expression: expression))
         }
