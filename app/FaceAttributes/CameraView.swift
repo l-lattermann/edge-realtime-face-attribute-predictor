@@ -215,15 +215,15 @@ extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
 
         var converted: [FacePrediction] = []
         for (face, age, gender, expression) in faces {
-            // vision counts from bottom left, the layer from top left
-            let midX = face.center.x * shownWidth + offsetX
-            let midY = (1 - face.center.y) * shownHeight + offsetY
+            // draws the upright hull, same rect that core ml gets
+            let box = face.cropBox
 
-            let width = face.sizePx.width * scale
-            let height = face.sizePx.height * scale
-            let placed = CGRect(x: midX - width / 2, y: midY - height / 2,
-                                width: width, height: height)
-            converted.append(FacePrediction(box: placed, roll: face.roll, age: age,
+            // vision counts from bottom left, the layer from top left
+            let placed = CGRect(x: box.minX * shownWidth + offsetX,
+                                y: (1 - box.maxY) * shownHeight + offsetY,
+                                width: box.width * shownWidth,
+                                height: box.height * shownHeight)
+            converted.append(FacePrediction(box: placed, age: age,
                                             gender: gender, expression: expression))
         }
         return converted

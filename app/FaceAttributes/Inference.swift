@@ -21,8 +21,7 @@ struct DetectedFace {
 
 struct FacePrediction: Identifiable {
     let id = UUID()
-    let box: CGRect   // layer coords, before the tilt
-    let roll: Double
+    let box: CGRect   // layer coords
     let age: String
     let gender: String
     let expression: String
