@@ -2,6 +2,7 @@
 
 import AVFoundation
 import Combine
+import CoreMotion
 import QuartzCore
 import SwiftUI
 import Vision
@@ -23,6 +24,7 @@ final class CameraSession: NSObject, ObservableObject {
     private let output = AVCaptureVideoDataOutput()
     private let inference = Inference()
     private let tracker = Tracker()
+    private let motion = CMMotionManager()
     private let queue = DispatchQueue(label: "camera")
     private var busy = false
     private var frameCount = 0
@@ -33,7 +35,21 @@ final class CameraSession: NSObject, ObservableObject {
     private var displayFpsSum = 0.0
     private var displayFrames = 0
 
+    // how far the phone is rolled from upright, radians
+    private var gravityAngle: Double {
+        guard let gravity = motion.deviceMotion?.gravity else { return 0 }
+
+        // near flat the angle is only noise, so hold level
+        if abs(gravity.z) > 0.95 {
+            return 0
+        }
+        return atan2(-gravity.x, -gravity.y)
+    }
+
     func start() {
+        motion.deviceMotionUpdateInterval = 0.1
+        motion.startDeviceMotionUpdates()
+
         AVCaptureDevice.requestAccess(for: .video) { granted in
             if granted {
                 self.queue.async { self.configure() }
@@ -145,6 +161,7 @@ extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
         frameCount = frameCount + 1
         let classifying = frameCount % inferEvery == 0
 
+        let tilt = gravityAngle
         var faces: [(DetectedFace, String, String, String)] = []
         let modelStart = CACurrentMediaTime()
 
@@ -167,7 +184,7 @@ extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
 
         // main thread, the view reads these
         DispatchQueue.main.async {
-            self.predictions = self.convert(faces, frameSize)
+            self.predictions = self.convert(faces, frameSize, tilt)
 
             let latencyMs = (CACurrentMediaTime() - frameStart) * 1000
             let fps = self.metrics.record(latencyMs: latencyMs, modelMs: modelMs,
@@ -200,7 +217,8 @@ extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
     }
 
     // vision box -> layer coords
-    func convert(_ faces: [(DetectedFace, String, String, String)], _ frame: CGSize) -> [FacePrediction] {
+    func convert(_ faces: [(DetectedFace, String, String, String)],
+                 _ frame: CGSize, _ tilt: Double) -> [FacePrediction] {
         let view = previewLayer?.bounds.size ?? .zero
         if view.width == 0 || frame.width == 0 {
             return []
@@ -223,7 +241,7 @@ extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
                                 y: (1 - box.maxY) * shownHeight + offsetY,
                                 width: box.width * shownWidth,
                                 height: box.height * shownHeight)
-            converted.append(FacePrediction(box: placed, age: age,
+            converted.append(FacePrediction(box: placed, tilt: tilt, age: age,
                                             gender: gender, expression: expression))
         }
         return converted

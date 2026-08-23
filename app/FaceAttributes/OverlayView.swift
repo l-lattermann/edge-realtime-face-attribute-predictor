@@ -10,21 +10,24 @@ struct OverlayView: View {
             ForEach(predictions) { prediction in
                 let box = prediction.box
 
-                Rectangle()
-                    .stroke(.green, lineWidth: 2)
-                    .frame(width: box.width, height: box.height)
-                    .position(x: box.midX, y: box.midY)
+                ZStack {
+                    Rectangle()
+                        .stroke(.green, lineWidth: 2)
+                        .frame(width: box.width, height: box.height)
 
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(prediction.age)
-                    Text(prediction.gender)
-                    Text(prediction.expression)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(prediction.age)
+                        Text(prediction.gender)
+                        Text(prediction.expression)
+                    }
+                    .font(.system(.caption2, design: .monospaced))
+                    .foregroundStyle(.white)
+                    .padding(4)
+                    .background(.black.opacity(0.6))
+                    .offset(y: box.height / 2 + 26)   // under the box
                 }
-                .font(.system(.caption2, design: .monospaced))
-                .foregroundStyle(.white)
-                .padding(4)
-                .background(.black.opacity(0.6))
-                .position(x: box.midX, y: box.maxY + 26)   // under the box
+                .rotationEffect(.radians(prediction.tilt))
+                .position(x: box.midX, y: box.midY)
             }
         }
     }
