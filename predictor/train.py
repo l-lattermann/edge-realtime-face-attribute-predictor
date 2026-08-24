@@ -25,15 +25,22 @@ criterion = torch.nn.CrossEntropyLoss(ignore_index=dataloader.NO_LABEL)
 
 
 def masked_loss(logits, labels, log_vars):
-    # one ce per head, in the order the model returns
+    # a batch can have no label for a head at all -> ce over nothing is nan
     losses = []
+    labelled = []
     for i in range(3):
-        losses.append(criterion(logits[i], labels[i]))
+        has_labels = (labels[i] != dataloader.NO_LABEL).sum() > 0
+        labelled.append(has_labels)
+        if has_labels:
+            losses.append(criterion(logits[i], labels[i]))
+        else:
+            losses.append(torch.zeros((), device=logits[i].device))
 
     # kendall 2018: exp(-s)*L + s/2, s learned per task
-    total = 0
+    total = torch.zeros((), device=logits[0].device)
     for i in range(3):
-        total = total + torch.exp(-log_vars[i]) * losses[i] + log_vars[i] / 2
+        if labelled[i]:
+            total = total + torch.exp(-log_vars[i]) * losses[i] + log_vars[i] / 2
     return total, losses
 
 
@@ -107,13 +114,15 @@ for epoch in range(1, args.epochs + 1):
         for p in model.trunk.parameters():
             p.requires_grad = True
 
+    # read lr before the step, otherwise the row is one epoch off
+    lr = schedule.get_last_lr()[0]
     loss_expr, loss_age, loss_gender = train_one_epoch(model, train_loader, optimiser, log_vars)
     f1_expr, f1_age, f1_gender = validate(model, val_loader)
     schedule.step()
 
     weights = torch.exp(-log_vars).tolist()
     writer.writerow([epoch, loss_age, loss_gender, loss_expr, f1_age, f1_gender, f1_expr,
-                     schedule.get_last_lr()[0], weights[1], weights[2], weights[0]])
+                     lr, weights[1], weights[2], weights[0]])
     log.flush()  # write now, not at the end
     print(epoch, "f1", round(f1_expr, 3), round(f1_age, 3), round(f1_gender, 3))
 

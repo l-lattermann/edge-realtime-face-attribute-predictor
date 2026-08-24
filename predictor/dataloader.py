@@ -58,17 +58,16 @@ def read_rafdb(split):
             continue
         path = RAFDB_DIR + "/original/" + name
         box_file = RAFDB_DIR + "/boundingbox/" + name.replace(".jpg", "_boundingbox.txt")
-        box = [float(v) for v in open(box_file).read().split()]
-        samples.append([path, box, NO_LABEL, NO_LABEL, int(label) - 1])  # file has 1..7
+        samples.append([path, box_file, NO_LABEL, NO_LABEL, int(label) - 1])  # file has 1..7
     return samples
 
 
-def load_image(path, box, transform):
+def load_image(path, box_file, transform):
     image = Image.open(path).convert("RGB")
 
     # raf-db has full photos, widen the box like fairface
-    if box is not None:
-        x0, y0, x1, y1 = box
+    if box_file is not None:
+        x0, y0, x1, y1 = [float(v) for v in open(box_file).read().split()]
         margin_px = CROP_MARGIN * max(x1 - x0, y1 - y0)  # keeps hair and chin
         image = image.crop((x0 - margin_px, y0 - margin_px, x1 + margin_px, y1 + margin_px))
 
@@ -85,8 +84,8 @@ class FaceDataset(torch.utils.data.Dataset):
         return len(self.samples)
 
     def __getitem__(self, i):
-        path, box, age, gender, expr = self.samples[i]
-        return load_image(path, box, self.transform), age, gender, expr
+        path, box_file, age, gender, expr = self.samples[i]
+        return load_image(path, box_file, self.transform), age, gender, expr
 
 
 def make_loader(split, task="all"):
