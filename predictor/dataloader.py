@@ -8,7 +8,7 @@ FAIRFACE_DIR = "../datasets/fairface"
 RAFDB_DIR = "../datasets/raf_db"
 IMAGE_SIZE_PX = 224
 BATCH_SIZE = 64
-NUM_WORKERS = 8
+NUM_WORKERS = 12
 FAIRFACE_SHARE = 0.5  # rest is raf-db
 CROP_MARGIN = 0.25  # fairface is allready margin025
 

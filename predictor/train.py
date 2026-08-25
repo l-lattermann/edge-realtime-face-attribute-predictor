@@ -8,6 +8,7 @@ import dataloader
 
 LR = 0.001
 FREEZE_EPOCHS = 2  # epochs the trunk stays frozen
+PATIENCE = 5  # stop after this many epochs without a better val f1
 DEVICE = "cuda"
 ARTIFACTS_DIR = "artifacts"
 
@@ -107,6 +108,7 @@ log = open(ARTIFACTS_DIR + "/" + args.run_name + "_train.csv", "w", newline="")
 writer = csv.writer(log)
 writer.writerow(COLUMNS)
 best_f1 = 0
+stale_epochs = 0
 
 for epoch in range(1, args.epochs + 1):
     # unfreeze, from here everything trains
@@ -130,6 +132,14 @@ for epoch in range(1, args.epochs + 1):
     mean_f1 = (f1_expr + f1_age + f1_gender) / 3
     if mean_f1 > best_f1:
         best_f1 = mean_f1
+        stale_epochs = 0
         torch.save(model.state_dict(), ARTIFACTS_DIR + "/" + args.run_name + ".pt")
+    else:
+        stale_epochs = stale_epochs + 1
+
+    # checkpoint is allready the best, more epochs only cost time
+    if stale_epochs >= PATIENCE:
+        print("stopped after", epoch, "epochs, no improvement for", PATIENCE)
+        break
 
 log.close()
