@@ -10,7 +10,6 @@ IMAGE_SIZE_PX = 224
 BATCH_SIZE = 64
 NUM_WORKERS = 12
 FAIRFACE_SHARE = 0.5  # rest is raf-db
-CROP_MARGIN = 0.25  # fairface is allready margin025
 
 # index order = logit order
 AGE_BINS = ["0-2", "3-9", "10-19", "20-29", "30-39", "40-49", "50-59", "60-69", "more than 70"]
@@ -44,7 +43,7 @@ def read_fairface(split):
     samples = []
     for row in csv.DictReader(open(FAIRFACE_DIR + "/fairface_label_" + split + ".csv")):
         path = FAIRFACE_DIR + "/" + row["file"]
-        samples.append([path, None, AGE_BINS.index(row["age"]), GENDERS.index(row["gender"]), NO_LABEL])
+        samples.append([path, AGE_BINS.index(row["age"]), GENDERS.index(row["gender"]), NO_LABEL])
     return samples
 
 
@@ -56,22 +55,18 @@ def read_rafdb(split):
         name, label = line.split()
         if not name.startswith(prefix):
             continue
-        path = RAFDB_DIR + "/original/" + name
-        box_file = RAFDB_DIR + "/boundingbox/" + name.replace(".jpg", "_boundingbox.txt")
-        samples.append([path, box_file, NO_LABEL, NO_LABEL, int(label) - 1])  # file has 1..7
+        # prepare_rafdb.py did the crop, nothing to do per epoch
+        path = RAFDB_DIR + "/cropped/" + name
+        samples.append([path, NO_LABEL, NO_LABEL, int(label) - 1])  # file has 1..7
     return samples
 
 
-def load_image(path, box_file, transform):
+def load_image(path, transform):
     image = Image.open(path).convert("RGB")
 
-    # raf-db has full photos, widen the box like fairface
-    if box_file is not None:
-        x0, y0, x1, y1 = [float(v) for v in open(box_file).read().split()]
-        margin_px = CROP_MARGIN * max(x1 - x0, y1 - y0)  # keeps hair and chin
-        image = image.crop((x0 - margin_px, y0 - margin_px, x1 + margin_px, y1 + margin_px))
-
-    image = image.resize((IMAGE_SIZE_PX, IMAGE_SIZE_PX))
+    # both sets are allready at training size, usually a no-op
+    if image.size != (IMAGE_SIZE_PX, IMAGE_SIZE_PX):
+        image = image.resize((IMAGE_SIZE_PX, IMAGE_SIZE_PX))
     return transform(image)
 
 
@@ -84,8 +79,8 @@ class FaceDataset(torch.utils.data.Dataset):
         return len(self.samples)
 
     def __getitem__(self, i):
-        path, box_file, age, gender, expr = self.samples[i]
-        return load_image(path, box_file, self.transform), age, gender, expr
+        path, age, gender, expr = self.samples[i]
+        return load_image(path, self.transform), age, gender, expr
 
 
 def make_loader(split, task="all"):
@@ -118,8 +113,8 @@ if __name__ == "__main__":
         print(split, "fairface", len(fairface), "rafdb", len(rafdb))
 
         # raf-db is very unbalanced
-        for column, vocabulary, samples in [(2, AGE_BINS, fairface), (3, GENDERS, fairface),
-                                            (4, EXPRESSIONS, rafdb)]:
+        for column, vocabulary, samples in [(1, AGE_BINS, fairface), (2, GENDERS, fairface),
+                                            (3, EXPRESSIONS, rafdb)]:
             counts = [0] * len(vocabulary)
             for sample in samples:
                 counts[sample[column]] = counts[sample[column]] + 1
