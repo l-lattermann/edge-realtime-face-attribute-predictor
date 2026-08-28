@@ -1,5 +1,5 @@
 #!/bin/bash
-# all runs for the report, one after the other
+# every run the ablations need, primary model first
 # start: tmux new-session -d -s train './run_all.sh'
 # attach: tmux attach -t train
 
@@ -16,21 +16,28 @@ run () {
     fi
     echo "=== $NAME  $(date +%H:%M)"
     $PYTHON train.py --run-name "$NAME" "$@" 2>&1 | tee "artifacts/${NAME}.log"
+    $PYTHON predict.py --run-name "$NAME" --images val
+    $PYTHON eval.py --run-name "$NAME" 2>&1 | tee "artifacts/${NAME}_eval.txt"
     echo "=== $NAME done  $(date +%H:%M)"
 }
 
-# main model, branch after row 9
+# the crop is square now, so the old ones do not match any more
+rm -rf ../datasets/raf_db/cropped
+$PYTHON prepare_rafdb.py
+
+# the primary model, branch after row 9
 run multitask_row9 --branch-row 9
 
-# ablation a: one net per attribute
+# ablation (b): branch earlier, which shares less and keeps more resolution for expression
+run multitask_row5 --branch-row 5
+run multitask_row4 --branch-row 4
+
+# ablation (a): one network per attribute, the ceiling the multi-task model is judged against
 run single_expr   --task expr
 run single_age    --task age
 run single_gender --task gender
 
-# ablation b: branch earlier, more resolution for expr
-run multitask_row5 --branch-row 5
-
-# row 4 is the only one that gives expr 28x28, see projektplan 5.2
-run multitask_row4 --branch-row 4
+# the deployed model, branch after row 9: three precisions for the app
+$PYTHON export.py --run-name multitask_row9 --branch-row 9
 
 echo "=== all runs finished  $(date +%H:%M)"

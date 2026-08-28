@@ -1,0 +1,29 @@
+single_gender   (torch/fp32)
+
+age      n=11043   acc 0.1255   macro f1 0.0468
+    0-2            p 0.026  r 0.673  f1 0.050  n   199
+    3-9            p 0.002  r 0.001  f1 0.002  n  1356
+    10-19          p 0.000  r 0.000  f1 0.000  n  1181
+    20-29          p 0.280  r 0.372  f1 0.319  n  3300
+    30-39          p 0.312  r 0.002  f1 0.004  n  2330
+    40-49          p 0.000  r 0.000  f1 0.000  n  1353
+    50-59          p 0.000  r 0.000  f1 0.000  n   796
+    60-69          p 0.026  r 0.056  f1 0.035  n   321
+    more than 70   p 0.500  r 0.005  f1 0.010  n   207
+    +-1 bin acc    0.3328
+    adult/elderly  acc 0.8960  macro f1 0.5035
+
+gender   n=13823   acc 0.9196   macro f1 0.9195
+    Male           p 0.921  r 0.921  f1 0.921  n  7041
+    Female         p 0.918  r 0.918  f1 0.918  n  6782
+
+expr     n=3068   acc 0.0825   macro f1 0.0646
+    Surprise       p 0.000  r 0.000  f1 0.000  n   329
+    Fear           p 0.025  r 0.081  f1 0.038  n    74
+    Disgust        p 0.057  r 0.113  f1 0.075  n   160
+    Happiness      p 0.262  r 0.071  f1 0.112  n  1185
+    Sadness        p 0.140  r 0.142  f1 0.141  n   478
+    Anger          p 0.045  r 0.469  f1 0.082  n   162
+    Neutral        p 0.250  r 0.001  f1 0.003  n   680
+
+geschrieben: artifacts/single_gender_eval.csv

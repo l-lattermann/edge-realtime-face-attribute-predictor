@@ -1,0 +1,29 @@
+multitask_row9   (torch/fp32)
+
+age      n=11043   acc 0.5522   macro f1 0.5480
+    0-2            p 0.721  r 0.714  f1 0.717  n   199
+    3-9            p 0.764  r 0.763  f1 0.763  n  1356
+    10-19          p 0.499  r 0.342  f1 0.406  n  1181
+    20-29          p 0.595  r 0.709  f1 0.647  n  3300
+    30-39          p 0.452  r 0.459  f1 0.455  n  2330
+    40-49          p 0.422  r 0.378  f1 0.399  n  1353
+    50-59          p 0.475  r 0.435  f1 0.454  n   796
+    60-69          p 0.455  r 0.452  f1 0.453  n   321
+    more than 70   p 0.818  r 0.522  f1 0.637  n   207
+    +-1 bin acc    0.9380
+    adult/elderly  acc 0.9713  macro f1 0.8306
+
+gender   n=13823   acc 0.9209   macro f1 0.9209
+    Male           p 0.929  r 0.915  f1 0.922  n  7041
+    Female         p 0.913  r 0.927  f1 0.920  n  6782
+
+expr     n=3068   acc 0.7989   macro f1 0.7024
+    Surprise       p 0.762  r 0.748  f1 0.755  n   329
+    Fear           p 0.700  r 0.473  f1 0.565  n    74
+    Disgust        p 0.565  r 0.381  f1 0.455  n   160
+    Happiness      p 0.903  r 0.913  f1 0.908  n  1185
+    Sadness        p 0.742  r 0.764  f1 0.753  n   478
+    Anger          p 0.735  r 0.685  f1 0.709  n   162
+    Neutral        p 0.739  r 0.810  f1 0.773  n   680
+
+geschrieben: artifacts/multitask_row9_eval.csv

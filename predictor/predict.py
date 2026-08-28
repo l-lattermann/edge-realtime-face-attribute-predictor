@@ -32,9 +32,13 @@ def collect(images):
         return dataloader.read_rafdb("val")
     if images == "val":
         return dataloader.read_fairface("val") + dataloader.read_rafdb("val")
+
     # a folder of own photos, no ground truth
     no = dataloader.NO_LABEL
-    return [[images + "/" + f, no, no, no] for f in sorted(os.listdir(images))]
+    samples = []
+    for name in sorted(os.listdir(images)):
+        samples.append([images + "/" + name, no, no, no, no])
+    return samples
 
 
 def load_model(path):
@@ -42,6 +46,7 @@ def load_model(path):
     model = definition.Predictor(args.branch_row)
     model.load_state_dict(state)
     return model.to(args.device).eval()
+
 
 
 def best(probabilities):
@@ -57,7 +62,7 @@ def predict_torch(model, samples):
     rows = []
     seen = 0
     with torch.no_grad():
-        for images, age, gender, expr in loader:
+        for images, age_lo, age_hi, gender, expr in loader:
             images = images.to(args.device)
             start = time.perf_counter()
             logits_expr, logits_age, logits_gender = model(images)
@@ -70,9 +75,11 @@ def predict_torch(model, samples):
             pred_gender, conf_gender = best(logits_gender.softmax(1))
             pred_expr, conf_expr = best(logits_expr.softmax(1))
 
+            # a coarse age range cannot be scored against one bin, so it counts as no label
+            true_age = torch.where(age_lo == age_hi, age_lo, torch.full_like(age_lo, dataloader.NO_LABEL))
             for i in range(len(images)):
                 rows.append([samples[seen + i][0],
-                             age[i].item(), gender[i].item(), expr[i].item(),
+                             true_age[i].item(), gender[i].item(), expr[i].item(),
                              pred_age[i], pred_gender[i], pred_expr[i],
                              round(conf_age[i], 4), round(conf_gender[i], 4), round(conf_expr[i], 4),
                              round(latency_ms, 3)])
@@ -86,7 +93,7 @@ def predict_coreml(package, samples):
     import coremltools
     model = coremltools.models.MLModel(package)
     rows = []
-    for path, age, gender, expr in samples:
+    for path, age_lo, age_hi, gender, expr in samples:
         from PIL import Image
         image = Image.open(path).convert("RGB").resize((dataloader.IMAGE_SIZE_PX,) * 2)
         start = time.perf_counter()
@@ -98,6 +105,7 @@ def predict_coreml(package, samples):
             logits = torch.tensor(out[head]).flatten()
             probabilities = logits.softmax(0)
             picked.append((int(probabilities.argmax()), round(float(probabilities.max()), 4)))
+        age = age_lo if age_lo == age_hi else dataloader.NO_LABEL
         rows.append([path, age, gender, expr,
                      picked[0][0], picked[1][0], picked[2][0],
                      picked[0][1], picked[1][1], picked[2][1], round(latency_ms, 3)])

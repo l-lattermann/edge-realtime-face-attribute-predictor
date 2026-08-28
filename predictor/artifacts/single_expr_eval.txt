@@ -1,0 +1,29 @@
+single_expr   (torch/fp32)
+
+age      n=11043   acc 0.1348   macro f1 0.0722
+    0-2            p 0.010  r 0.080  f1 0.018  n   199
+    3-9            p 0.124  r 0.297  f1 0.175  n  1356
+    10-19          p 0.094  r 0.231  f1 0.133  n  1181
+    20-29          p 0.311  r 0.232  f1 0.265  n  3300
+    30-39          p 0.000  r 0.000  f1 0.000  n  2330
+    40-49          p 0.000  r 0.000  f1 0.000  n  1353
+    50-59          p 0.054  r 0.035  f1 0.043  n   796
+    60-69          p 0.016  r 0.016  f1 0.016  n   321
+    more than 70   p 0.000  r 0.000  f1 0.000  n   207
+    +-1 bin acc    0.3538
+    adult/elderly  acc 0.9244  macro f1 0.4966
+
+gender   n=13823   acc 0.4767   macro f1 0.4760
+    Male           p 0.487  r 0.504  f1 0.495  n  7041
+    Female         p 0.465  r 0.448  f1 0.457  n  6782
+
+expr     n=3068   acc 0.7953   macro f1 0.7137
+    Surprise       p 0.773  r 0.775  f1 0.774  n   329
+    Fear           p 0.727  r 0.541  f1 0.620  n    74
+    Disgust        p 0.504  r 0.425  f1 0.461  n   160
+    Happiness      p 0.897  r 0.920  f1 0.908  n  1185
+    Sadness        p 0.727  r 0.747  f1 0.737  n   478
+    Anger          p 0.797  r 0.704  f1 0.748  n   162
+    Neutral        p 0.738  r 0.759  f1 0.748  n   680
+
+geschrieben: artifacts/single_expr_eval.csv

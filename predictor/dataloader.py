@@ -1,11 +1,11 @@
 import csv
-import random
 import torch
 import torchvision
 from PIL import Image
 
 FAIRFACE_DIR = "../datasets/fairface"
 RAFDB_DIR = "../datasets/raf_db"
+ATTRIBUTES_FILE = RAFDB_DIR + "/attributes.txt"
 IMAGE_SIZE_PX = 224
 BATCH_SIZE = 64
 NUM_WORKERS = 12
@@ -18,6 +18,12 @@ EXPRESSIONS = ["Surprise", "Fear", "Disgust", "Happiness", "Sadness", "Anger", "
 
 # -1 = no label, ignore_index skips it
 NO_LABEL = -1
+
+# raf-db age is 5 coarse ranges, these are the fairface bins each one covers
+RAFDB_AGE_SPAN = [[0, 1], [1, 2], [3, 4], [5, 7], [8, 8]]
+# only 0-3 and 70+ are taken, the middle ranges guess at bins fairface allready fills
+RAFDB_AGE_USED = [0, 4]
+RAFDB_GENDER_UNSURE = 2
 
 # imagenet stats, the backbone was trained with these
 MEAN_RGB = [0.485, 0.456, 0.406]
@@ -39,26 +45,54 @@ PLAIN = torchvision.transforms.Compose([
 ])
 
 
-def read_fairface(split):
+def read_fairface(split, task="all"):
+    # age and gender sit in the same row, so a single task run has to blank the other one
     samples = []
     for row in csv.DictReader(open(FAIRFACE_DIR + "/fairface_label_" + split + ".csv")):
-        path = FAIRFACE_DIR + "/" + row["file"]
-        samples.append([path, AGE_BINS.index(row["age"]), GENDERS.index(row["gender"]), NO_LABEL])
+        age = AGE_BINS.index(row["age"]) if task in ["all", "age"] else NO_LABEL
+        gender = GENDERS.index(row["gender"]) if task in ["all", "gender"] else NO_LABEL
+        samples.append([FAIRFACE_DIR + "/" + row["file"], age, age, gender, NO_LABEL])
     return samples
 
 
-def read_rafdb(split):
-    # both splits in one file, the prefix says which
+def read_rafdb(split, task="all"):
+    # gender and a coarse age range come from the manual annotation, prepare_rafdb.py collected it
+    attributes = {}
+    for line in open(ATTRIBUTES_FILE):
+        name, gender, race, age_range = line.split()
+        attributes[name] = [int(gender), int(age_range)]
+
+    # both splits sit in one file, the prefix says which
     prefix = "train_" if split == "train" else "test_"
     samples = []
     for line in open(RAFDB_DIR + "/EmoLabel/list_patition_label.txt"):
         name, label = line.split()
         if not name.startswith(prefix):
             continue
-        # prepare_rafdb.py did the crop, nothing to do per epoch
-        path = RAFDB_DIR + "/cropped/" + name
-        samples.append([path, NO_LABEL, NO_LABEL, int(label) - 1])  # file has 1..7
+        gender, age_range = attributes[name]
+
+        # an unsure annotation is no annotation
+        if gender == RAFDB_GENDER_UNSURE or task not in ["all", "gender"]:
+            gender = NO_LABEL
+
+        # the label names a group of bins, not one bin
+        if age_range in RAFDB_AGE_USED and task in ["all", "age"]:
+            age_lo, age_hi = RAFDB_AGE_SPAN[age_range]
+        else:
+            age_lo, age_hi = NO_LABEL, NO_LABEL
+
+        expr = int(label) - 1 if task in ["all", "expr"] else NO_LABEL  # file has 1..7
+        samples.append([RAFDB_DIR + "/cropped/" + name, age_lo, age_hi, gender, expr])
     return samples
+
+
+def keep_labelled(samples):
+    # a sample without a single label would only cost forward passes
+    kept = []
+    for sample in samples:
+        if sample[1] != NO_LABEL or sample[3] != NO_LABEL or sample[4] != NO_LABEL:
+            kept.append(sample)
+    return kept
 
 
 def load_image(path, transform):
@@ -79,13 +113,14 @@ class FaceDataset(torch.utils.data.Dataset):
         return len(self.samples)
 
     def __getitem__(self, i):
-        path, age, gender, expr = self.samples[i]
-        return load_image(path, self.transform), age, gender, expr
+        path, age_lo, age_hi, gender, expr = self.samples[i]
+        return load_image(path, self.transform), age_lo, age_hi, gender, expr
 
 
 def make_loader(split, task="all"):
-    fairface = read_fairface(split) if task in ["all", "age", "gender"] else []
-    rafdb = read_rafdb(split) if task in ["all", "expr"] else []
+    # both sources carry age and gender now, so every task reads both
+    fairface = keep_labelled(read_fairface(split, task))
+    rafdb = keep_labelled(read_rafdb(split, task))
     samples = fairface + rafdb
 
     # no augment on val, has to stay comparable
@@ -113,10 +148,17 @@ if __name__ == "__main__":
         print(split, "fairface", len(fairface), "rafdb", len(rafdb))
 
         # raf-db is very unbalanced
-        for column, vocabulary, samples in [(1, AGE_BINS, fairface), (2, GENDERS, fairface),
-                                            (3, EXPRESSIONS, rafdb)]:
+        for column, vocabulary, samples in [(1, AGE_BINS, fairface), (3, GENDERS, fairface),
+                                            (4, EXPRESSIONS, rafdb)]:
             counts = [0] * len(vocabulary)
             for sample in samples:
                 counts[sample[column]] = counts[sample[column]] + 1
             for name, count in zip(vocabulary, counts):
                 print("   ", name, count)
+
+        # how much raf-db adds to the two thin age bins
+        extra = [0] * len(AGE_BINS)
+        for sample in rafdb:
+            if sample[1] != NO_LABEL:
+                extra[sample[1]] = extra[sample[1]] + 1
+        print("    raf-db age ranges per first bin", extra)
