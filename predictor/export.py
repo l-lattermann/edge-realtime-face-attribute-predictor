@@ -66,7 +66,7 @@ def package_size_mb(path):
 model = definition.Predictor(args.branch_row)
 
 if not args.random:
-    model.load_state_dict(torch.load(ARTIFACTS_DIR + "/" + args.run_name + ".pt"))
+    model.load_state_dict(torch.load(ARTIFACTS_DIR + "/" + args.run_name + ".pt", map_location="cpu"))
 model.eval()
 
 log = open(ARTIFACTS_DIR + "/" + args.run_name + "_export.csv", "w", newline="")
