@@ -5,6 +5,7 @@ import Combine
 import CoreMotion
 import QuartzCore
 import SwiftUI
+import UIKit
 import Vision
 
 final class CameraSession: NSObject, ObservableObject {
@@ -12,10 +13,14 @@ final class CameraSession: NSObject, ObservableObject {
     @Published var latencyMs: Double = 0
     @Published var fps: Double = 0
     @Published var memoryMb: Double = 0
-    @Published var usingFrontCamera = false
+    @Published var usingFrontCamera = true
     @Published var highResolution = false
     @Published var inferEvery = 5   // classify every nth frame, detect on all
     @Published var precision = "fp16"
+    @Published var blurFaces = false
+    @Published var debugBoxes = true
+    @Published var cropPreview: CGImage?
+    @Published var tiltDegrees: Double = 0
 
     let session = AVCaptureSession()
     let metrics = Metrics()
@@ -47,6 +52,9 @@ final class CameraSession: NSObject, ObservableObject {
     }
 
     func start() {
+        // a face in front of the camera is no touch, so the screen would dim mid measurement
+        UIApplication.shared.isIdleTimerDisabled = true
+
         motion.deviceMotionUpdateInterval = 0.1
         motion.startDeviceMotionUpdates()
 
@@ -156,8 +164,10 @@ extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
                                             orientation: .up, options: [:])
 
         // detect every frame so the box does not stutter
+        let boxes = inference.detect(handler, frame: frameSize)
+
+        // only the readout still wants the phone roll, the crop follows the face
         let tilt = gravityAngle
-        let boxes = inference.detect(handler, frame: frameSize, tilt: tilt)
 
         frameCount = frameCount + 1
         let classifying = frameCount % inferEvery == 0
@@ -167,7 +177,8 @@ extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
 
         if classifying {
             for face in boxes {
-                let (age, gender, expression) = inference.classify(handler, box: face.cropBox)
+                let (age, gender, expression) = inference.classify(pixelBuffer, face: face,
+                                                                   frame: frameSize)
                 faces.append((face, age, gender, expression))
             }
             tracker.remember(faces)
@@ -182,9 +193,18 @@ extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
         let modelMs = classifying
             ? (CACurrentMediaTime() - modelStart) * 1000 / Double(max(boxes.count, 1)) : 0
 
+        // blurred on every frame, otherwise the patch lags behind a moving face
+        var patches: [CGImage?] = []
+        for face in boxes {
+            patches.append(blurFaces ? inference.blurPatch(pixelBuffer, face: face,
+                                                           frame: frameSize) : nil)
+        }
+
         // main thread, the view reads these
         DispatchQueue.main.async {
-            self.predictions = self.convert(faces, frameSize, tilt)
+            self.predictions = self.convert(faces, patches, frameSize)
+            self.tiltDegrees = tilt * 180 / .pi
+            self.cropPreview = self.inference.lastCrop
 
             let latencyMs = (CACurrentMediaTime() - frameStart) * 1000
             let fps = self.metrics.record(latencyMs: latencyMs, modelMs: modelMs,
@@ -217,8 +237,8 @@ extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
     }
 
     // vision box -> layer coords
-    func convert(_ faces: [(DetectedFace, String, String, String)],
-                 _ frame: CGSize, _ tilt: Double) -> [FacePrediction] {
+    func convert(_ faces: [(DetectedFace, String, String, String)], _ patches: [CGImage?],
+                 _ frame: CGSize) -> [FacePrediction] {
         let view = previewLayer?.bounds.size ?? .zero
         if view.width == 0 || frame.width == 0 {
             return []
@@ -231,20 +251,33 @@ extension CameraSession: AVCaptureVideoDataOutputSampleBufferDelegate {
         let offsetX = (view.width - shownWidth) / 2   // negative, the overhang is cropped
         let offsetY = (view.height - shownHeight) / 2
 
-        var converted: [FacePrediction] = []
-        for (face, age, gender, expression) in faces {
-            // vision counts from bottom left, the layer from top left
-            let midX = face.center.x * shownWidth + offsetX
-            let midY = (1 - face.center.y) * shownHeight + offsetY
+        let shown = CGSize(width: shownWidth, height: shownHeight)
+        let offset = CGPoint(x: offsetX, y: offsetY)
 
-            let width = face.sizePx.width * scale
-            let height = face.sizePx.height * scale
-            let placed = CGRect(x: midX - width / 2, y: midY - height / 2,
-                                width: width, height: height)
-            converted.append(FacePrediction(box: placed, tilt: tilt, age: age,
-                                            gender: gender, expression: expression))
+        var converted: [FacePrediction] = []
+        for i in 0..<faces.count {
+            let (face, age, gender, expression) = faces[i]
+            let square = CGSize(width: face.squareSidePx, height: face.squareSidePx)
+            converted.append(FacePrediction(
+                blur: patches[i],
+                blurBox: placeBox(face.center, face.hullSizePx, scale, shown, offset),
+                landmarkBox: placeBox(face.landmarkCenter, face.landmarkSizePx, scale, shown, offset),
+                box: placeBox(face.center, face.sizePx, scale, shown, offset),
+                squareBox: placeBox(face.center, square, scale, shown, offset),
+                // vision counts y up and the layer counts y down, so the angle flips
+                roll: -face.roll, age: age, gender: gender, expression: expression))
         }
         return converted
+    }
+
+    // vision counts from bottom left, the layer from top left
+    private func placeBox(_ center: CGPoint, _ sizePx: CGSize, _ scale: CGFloat,
+                          _ shown: CGSize, _ offset: CGPoint) -> CGRect {
+        let midX = center.x * shown.width + offset.x
+        let midY = (1 - center.y) * shown.height + offset.y
+        let width = sizePx.width * scale
+        let height = sizePx.height * scale
+        return CGRect(x: midX - width / 2, y: midY - height / 2, width: width, height: height)
     }
 }
 
@@ -284,28 +317,40 @@ struct CameraView: View {
             PreviewLayer(camera: camera)
                 .ignoresSafeArea()
 
-            OverlayView(predictions: camera.predictions)
+            OverlayView(predictions: camera.predictions, blurFaces: camera.blurFaces,
+                        debugBoxes: camera.debugBoxes)
                 .ignoresSafeArea()
 
             VStack {
-                HStack(alignment: .top) {
-                    Text(String(format: "%.0f fps\n%.1f ms\n%d faces\n%.0f MB",
-                                camera.fps, camera.latencyMs,
-                                camera.predictions.count, camera.memoryMb))
-                        .font(.system(.caption, design: .monospaced))
-                        .padding(6)
-                        .background(.black.opacity(0.6))
-                        .foregroundStyle(.white)
+                ZStack(alignment: .top) {
+                    // exactly the square that goes into core ml, resized to 224 by vision
+                    if camera.debugBoxes, let crop = camera.cropPreview {
+                        Image(decorative: crop, scale: 1, orientation: .up)
+                            .resizable()
+                            .frame(width: 84, height: 84)
+                            .border(.red, width: 1)
+                    }
 
-                    Spacer()
-
-                    Button(action: camera.flipCamera) {
-                        Image(systemName: "arrow.triangle.2.circlepath.camera")
-                            .font(.title2)
-                            .frame(width: 44, height: 44)
+                    HStack(alignment: .top) {
+                        Text(String(format: "%.0f fps\n%.1f ms\n%d faces\n%.0f MB\n%.0f deg",
+                                    camera.fps, camera.latencyMs,
+                                    camera.predictions.count, camera.memoryMb,
+                                    camera.tiltDegrees))
+                            .font(.system(.caption, design: .monospaced))
+                            .padding(6)
                             .background(.black.opacity(0.6))
                             .foregroundStyle(.white)
-                            .clipShape(Circle())
+
+                        Spacer()
+
+                        Button(action: camera.flipCamera) {
+                            Image(systemName: "arrow.triangle.2.circlepath.camera")
+                                .font(.title2)
+                                .frame(width: 44, height: 44)
+                                .background(.black.opacity(0.6))
+                                .foregroundStyle(.white)
+                                .clipShape(Circle())
+                        }
                     }
                 }
 
@@ -319,6 +364,12 @@ struct CameraView: View {
                     }
 
                     Button(camera.precision) { camera.nextPrecision() }
+
+                    Button("faceblur") { camera.blurFaces.toggle() }
+                        .foregroundStyle(camera.blurFaces ? .green : .white)
+
+                    Button("debug") { camera.debugBoxes.toggle() }
+                        .foregroundStyle(camera.debugBoxes ? .green : .white)
 
                     Button("share \(camera.metrics.rowCount)") {
                         shareItem = ShareItem(url: camera.metrics.writeTemporaryFile())

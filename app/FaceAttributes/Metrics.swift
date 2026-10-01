@@ -11,7 +11,7 @@ final class Metrics {
     private var lastFrameSeconds = CACurrentMediaTime()
     private let startSeconds = CACurrentMediaTime()
 
-    let header = "seconds,latency_ms,model_ms,fps,classified,face_count,memory_mb,thermal,precision,resolution"
+    let header = "seconds,latency_ms,model_ms,serving_frame_s,serving_face_s,fps,classified,face_count,memory_mb,thermal,precision,resolution"
 
     func record(latencyMs: Double, modelMs: Double, classified: Bool, faceCount: Int,
                 precision: String, resolution: String) -> Double {
@@ -25,9 +25,13 @@ final class Metrics {
         let meanSeconds = recentSeconds.reduce(0, +) / Double(recentSeconds.count)
         let fps = meanSeconds > 0 ? 1 / meanSeconds : 0
 
-        rows.append(String(format: "%.2f,%.2f,%.2f,%.1f,%d,%d,%.1f,%d,%@,%@",
-                           now - startSeconds, latencyMs, modelMs, fps, classified ? 1 : 0,
-                           faceCount, Metrics.memoryMb(),
+        // serving time in seconds, once for the whole frame and once per face
+        let servingFrameS = latencyMs / 1000
+        let servingFaceS = faceCount > 0 ? servingFrameS / Double(faceCount) : 0   // no face, nothing served
+
+        rows.append(String(format: "%.2f,%.2f,%.2f,%.5f,%.5f,%.1f,%d,%d,%.1f,%d,%@,%@",
+                           now - startSeconds, latencyMs, modelMs, servingFrameS, servingFaceS,
+                           fps, classified ? 1 : 0, faceCount, Metrics.memoryMb(),
                            ProcessInfo.processInfo.thermalState.rawValue, precision, resolution))
         return fps
     }
